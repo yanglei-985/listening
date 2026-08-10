@@ -649,6 +649,7 @@ async function generateCaption() {
   if (!sourceUrl) return setCaptionStatus("先填视频 URL");
   if (!API_BASE) return setCaptionStatus("API 未配置");
 
+  els.generateCaption.disabled = true;
   setCaptionStatus("提交中...");
   try {
     const data = await api("/api/caption-jobs", {
@@ -662,19 +663,54 @@ async function generateCaption() {
     });
 
     if (data.content) {
-      const remote = normalizeContent({ ...data.content.content, sentences: data.content.sentences });
-      state.contents.unshift(remote);
-      state.content = remote;
-      state.currentIndex = 0;
-      setCaptionStatus("字幕已生成并导入");
-      render();
+      importRemoteContent(data.content);
       return;
     }
 
-    setCaptionStatus(data.message || `任务状态：${data.job.status}`);
+    if (data.job?.id && ["queued", "processing"].includes(data.job.status)) {
+      setCaptionStatus(data.message || `字幕任务处理中：${data.job.status}`);
+      await pollCaptionJob(data.job.id);
+      return;
+    }
+
+    setCaptionStatus(data.message || `任务状态：${data.job?.status || "unknown"}`);
   } catch (error) {
     setCaptionStatus(`字幕任务失败：${error.message}`);
+  } finally {
+    els.generateCaption.disabled = false;
   }
+}
+
+async function pollCaptionJob(jobId) {
+  const maxAttempts = 80;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    await sleep(3000);
+    const data = await api(`/api/caption-jobs/${encodeURIComponent(jobId)}`);
+    if (data.content) {
+      importRemoteContent(data.content);
+      return;
+    }
+
+    if (data.job?.status === "failed") {
+      setCaptionStatus(`字幕任务失败：${data.job.error_message || "VideoCaptioner failed"}`);
+      return;
+    }
+
+    setCaptionStatus(`字幕生成中 ${attempt}/${maxAttempts} · ${data.job?.status || "processing"}`);
+  }
+
+  setCaptionStatus("字幕还在后台处理，稍后重新打开导入窗口查看");
+}
+
+function importRemoteContent(contentPayload) {
+  const remote = normalizeContent({ ...contentPayload.content, sentences: contentPayload.sentences });
+  state.contents.unshift(remote);
+  state.content = remote;
+  state.currentIndex = 0;
+  state.currentSentenceVisible = false;
+  setCaptionStatus("字幕已生成并导入");
+  setSyncStatus("SRT 已保存到 D1");
+  render();
 }
 
 async function readSrtFile() {
@@ -887,6 +923,10 @@ function loadJson(key, fallback) {
 
 function saveJson(key, value) {
   localStorage.setItem(key, JSON.stringify(value));
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 function stopSegmentTimer() {

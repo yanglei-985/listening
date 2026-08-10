@@ -237,7 +237,7 @@ async function createCaptionJob(request, env) {
     });
 
     const update = {
-      status: remote.srt ? "complete" : (remote.status || "processing"),
+      status: remote.srt ? "complete" : normalizeCaptionStatus(remote.status || "processing"),
       externalJobId: cleanText(remote.job_id || remote.id || "", 160),
       resultSrt: typeof remote.srt === "string" ? remote.srt : "",
       error: ""
@@ -271,9 +271,26 @@ async function createCaptionJob(request, env) {
 }
 
 async function getCaptionJob(env, jobId) {
-  const job = await readCaptionJob(env, jobId);
+  let job = await readCaptionJob(env, jobId);
   if (!job) throw httpError(404, "Caption job not found");
-  return { job, caption_service_configured: Boolean(getCaptionBase(env)) };
+
+  const captionBase = getCaptionBase(env);
+  let content = null;
+  if (job.content_id) {
+    content = await getContent(env, job.content_id).catch(() => null);
+  }
+
+  if (
+    captionBase &&
+    job.external_job_id &&
+    ["queued", "processing"].includes(job.status)
+  ) {
+    const refreshed = await refreshCaptionJob(env, captionBase, job);
+    job = refreshed.job || job;
+    content = refreshed.content || content;
+  }
+
+  return { job, content, caption_service_configured: Boolean(captionBase) };
 }
 
 async function readCaptionJob(env, jobId) {
@@ -302,17 +319,72 @@ async function updateCaptionJob(env, jobId, update) {
   ).run();
 }
 
-async function callCaptionService(base, path, body) {
-  const response = await fetch(`${base}${path}`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body)
-  });
+async function refreshCaptionJob(env, captionBase, job) {
+  const remote = await callCaptionService(
+    captionBase,
+    `/jobs/${encodeURIComponent(job.external_job_id)}`,
+    null,
+    "GET"
+  );
+
+  const update = {
+    status: normalizeCaptionStatus(remote.status || job.status),
+    error: remote.error || ""
+  };
+  let content = null;
+
+  if (typeof remote.srt === "string" && remote.srt.trim()) {
+    const parsed = parseStrictSrt(remote.srt);
+    if (!parsed.ok) throw httpError(502, "VideoCaptioner returned invalid SRT", parsed.errors);
+
+    if (job.content_id) {
+      content = await getContent(env, job.content_id).catch(() => null);
+      update.status = "complete";
+      update.resultSrt = remote.srt;
+    } else {
+      content = await createContentFromSentences(env, {
+        title: job.title,
+        sourceUrl: job.source_url,
+        creatorUserId: job.requested_by_user_id,
+        sentences: parsed.sentences,
+        srtSource: remote.srt,
+        captionStatus: "ready",
+        captionJobId: job.id
+      });
+      update.status = "complete";
+      update.contentId = content.content.id;
+      update.resultSrt = remote.srt;
+    }
+  }
+
+  if (update.status === "failed") {
+    update.error = remote.error || remote.message || "VideoCaptioner service failed";
+  }
+
+  await updateCaptionJob(env, job.id, update);
+  return { job: await readCaptionJob(env, job.id), content };
+}
+
+async function callCaptionService(base, path, body, method = "POST") {
+  const init = {
+    method,
+    headers: { "content-type": "application/json" }
+  };
+  if (body) init.body = JSON.stringify(body);
+
+  const response = await fetch(`${base}${path}`, init);
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     throw httpError(502, data.error || data.message || "VideoCaptioner service failed");
   }
   return data;
+}
+
+function normalizeCaptionStatus(status) {
+  if (status === "complete") return "complete";
+  if (status === "failed" || status === "error") return "failed";
+  if (status === "queued") return "queued";
+  return "processing";
 }
 
 async function recordHeard(request, env) {

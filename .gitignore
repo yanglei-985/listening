@@ -3,4 +3,7 @@ node_modules/
 .dev.vars
 dist/
 *.log
-
+caption-service/.venv/
+caption-service/.env
+caption-service/data/
+caption-service/__pycache__/

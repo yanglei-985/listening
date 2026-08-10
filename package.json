@@ -8,10 +8,11 @@
     "api:deploy": "wrangler deploy",
     "d1:migrate:local": "wrangler d1 migrations apply listening --local",
     "d1:migrate:remote": "wrangler d1 migrations apply listening --remote",
+    "caption:dev": "cd caption-service && uvicorn app:app --host 0.0.0.0 --port 8080",
+    "caption:test": "python -m compileall caption-service",
     "web:serve": "npx http-server docs -p 4173"
   },
   "devDependencies": {
     "wrangler": "^4.120.0"
   }
 }
-

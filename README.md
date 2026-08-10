@@ -48,9 +48,15 @@ Student playback position is stored in `listening_presence`. Teacher dashboard r
 
 ## VideoCaptioner
 
-Cloudflare Worker does not run VideoCaptioner directly. It calls an HTTP service through `VIDEOCAPTIONER_API_BASE`.
+Cloudflare Worker does not run VideoCaptioner directly. It calls the HTTP adapter in `caption-service/` through `VIDEOCAPTIONER_API_BASE`.
 
-Expected service shape for the first adapter:
+Groq settings for the caption service:
+
+- `GROQ_API_BASE=https://api.groq.com/openai/v1`
+- `GROQ_WHISPER_MODEL=whisper-large-v3-turbo`
+- `GROQ_API_KEY` is a server-side secret and must not be exposed to Pages or Worker logs.
+
+Expected service shape:
 
 ```http
 POST /jobs
@@ -64,4 +70,31 @@ Content-Type: application/json
 }
 ```
 
-The response can either return `{"status":"processing","job_id":"..."}` or return `{"srt":"..."}` directly. Returned SRT is strictly validated before it is saved.
+The response can either return `{"status":"processing","job_id":"..."}` or return `{"srt":"..."}` directly.
+
+When the response is asynchronous, the Worker polls:
+
+```http
+GET /jobs/{job_id}
+```
+
+If the adapter returns SRT, the Worker strictly validates it before saving it to D1. The frontend also polls `/api/caption-jobs/:id` until the content is imported.
+
+Run the adapter locally:
+
+```powershell
+cd caption-service
+python -m venv .venv
+.\\.venv\\Scripts\\Activate.ps1
+pip install -r requirements.txt
+$env:GROQ_API_KEY = "<your-groq-key>"
+$env:GROQ_API_BASE = "https://api.groq.com/openai/v1"
+$env:GROQ_WHISPER_MODEL = "whisper-large-v3-turbo"
+uvicorn app:app --host 0.0.0.0 --port 8080
+```
+
+Deploy it on a server, then set the Worker variable:
+
+```powershell
+npx wrangler deploy --var VIDEOCAPTIONER_API_BASE:https://your-caption-service.example.com
+```
