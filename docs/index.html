@@ -8,7 +8,7 @@
     <script src="./config.js"></script>
     <script src="./app.js" defer></script>
   </head>
-  <body class="hide-subtitles">
+  <body class="mask-subtitles">
     <div class="app-shell">
       <header class="topbar">
         <div class="brand">
@@ -22,6 +22,11 @@
           <select id="contentSelect" aria-label="选择内容"></select>
           <button id="openImport" class="command" type="button">导入</button>
           <button id="teacherToggle" class="icon-command" type="button" title="老师视图" aria-label="老师视图">◎</button>
+          <div class="account-box">
+            <input id="accessCode" autocomplete="off" placeholder="访问码">
+            <button id="loginBtn" class="command" type="button">进入</button>
+            <span id="accountBadge">未登录</span>
+          </div>
         </div>
       </header>
 
@@ -38,7 +43,7 @@
         <section class="player-panel" aria-label="播放器">
           <div id="mediaMount" class="media-mount"></div>
 
-          <div class="current-block">
+          <div id="currentBlock" class="current-block">
             <div class="sentence-meta">
               <span id="currentIndex">01</span>
               <span id="currentTime">00:00 - 00:00</span>
@@ -51,7 +56,8 @@
             <button id="prevBtn" class="icon-command large" type="button" title="上一句" aria-label="上一句">←</button>
             <button id="replayBtn" class="icon-command primary large" type="button" title="重播当前句" aria-label="重播当前句">↻</button>
             <button id="nextBtn" class="icon-command large" type="button" title="下一句" aria-label="下一句">→</button>
-            <button id="toggleSubtitles" class="command" type="button">显示字幕</button>
+            <button id="toggleSentenceMask" class="command" type="button">显示本句</button>
+            <button id="toggleSubtitles" class="command" type="button">显示全部</button>
           </div>
 
           <div class="mark-bar" aria-label="理解状态">
@@ -79,7 +85,7 @@
           </section>
 
           <section id="teacherSection" class="teacher-section" hidden>
-            <h2>老师视图</h2>
+            <h2>老师后台</h2>
             <div id="teacherList" class="teacher-list"></div>
           </section>
         </aside>
@@ -100,16 +106,24 @@
           视频 URL
           <input id="importUrl" name="url" autocomplete="off" placeholder="https://www.youtube.com/watch?v=...">
         </label>
+        <div class="caption-actions">
+          <button class="command" id="generateCaption" type="button">后台生成字幕</button>
+          <span id="captionJobStatus">VideoCaptioner 待配置</span>
+        </div>
         <label>
-          字幕
-          <textarea id="importTranscript" name="transcript" rows="10" placeholder="00:00 - 00:04 First sentence.&#10;00:04 - 00:08 Second sentence."></textarea>
+          SRT 文件
+          <input id="srtFile" name="srtFile" type="file" accept=".srt,text/plain">
         </label>
+        <label>
+          严格 SRT 字幕
+          <textarea id="importTranscript" name="transcript" rows="12" placeholder="1&#10;00:00:00,000 --> 00:00:04,000&#10;First sentence.&#10;&#10;2&#10;00:00:04,000 --> 00:00:08,000&#10;Second sentence."></textarea>
+        </label>
+        <div id="srtValidation" class="validation-box">等待 SRT</div>
         <div class="dialog-actions">
-          <button class="command ghost" id="loadDemoTranscript" type="button">示例</button>
+          <button class="command ghost" id="loadDemoTranscript" type="button">示例 SRT</button>
           <button class="command primary" type="submit">保存</button>
         </div>
       </form>
     </dialog>
   </body>
 </html>
-

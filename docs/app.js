@@ -1,4 +1,5 @@
 const API_BASE = (window.LISTENING_API_BASE || "").replace(/\/+$/, "");
+
 const DEMO_CONTENT = {
   id: "demo_bilingual_brain",
   title: "Demo: bilingual brain listening drill",
@@ -20,8 +21,12 @@ const els = {
   contentSelect: document.querySelector("#contentSelect"),
   openImport: document.querySelector("#openImport"),
   teacherToggle: document.querySelector("#teacherToggle"),
+  accessCode: document.querySelector("#accessCode"),
+  loginBtn: document.querySelector("#loginBtn"),
+  accountBadge: document.querySelector("#accountBadge"),
   sentenceList: document.querySelector("#sentenceList"),
   mediaMount: document.querySelector("#mediaMount"),
+  currentBlock: document.querySelector("#currentBlock"),
   currentIndex: document.querySelector("#currentIndex"),
   currentTime: document.querySelector("#currentTime"),
   currentSentence: document.querySelector("#currentSentence"),
@@ -29,6 +34,7 @@ const els = {
   prevBtn: document.querySelector("#prevBtn"),
   replayBtn: document.querySelector("#replayBtn"),
   nextBtn: document.querySelector("#nextBtn"),
+  toggleSentenceMask: document.querySelector("#toggleSentenceMask"),
   toggleSubtitles: document.querySelector("#toggleSubtitles"),
   understoodBtn: document.querySelector("#understoodBtn"),
   unsureBtn: document.querySelector("#unsureBtn"),
@@ -47,29 +53,40 @@ const els = {
   importTitle: document.querySelector("#importTitle"),
   importUrl: document.querySelector("#importUrl"),
   importTranscript: document.querySelector("#importTranscript"),
-  loadDemoTranscript: document.querySelector("#loadDemoTranscript")
+  srtFile: document.querySelector("#srtFile"),
+  srtValidation: document.querySelector("#srtValidation"),
+  loadDemoTranscript: document.querySelector("#loadDemoTranscript"),
+  generateCaption: document.querySelector("#generateCaption"),
+  captionJobStatus: document.querySelector("#captionJobStatus")
 };
 
 const state = {
-  learnerId: getLearnerId(),
+  account: loadJson("listening.account", null),
+  learnerId: "",
   contents: [],
   content: normalizeContent(DEMO_CONTENT),
   currentIndex: 0,
   progress: loadJson("listening.progress", {}),
   playbackCounts: loadJson("listening.playbackCounts", {}),
   favorites: loadJson("listening.favorites", {}),
-  subtitlesVisible: false,
+  allSubtitlesVisible: false,
+  currentSentenceVisible: false,
   teacherVisible: false,
+  teacherDashboard: null,
   ytPlayer: null,
   ytReady: false,
   mediaKind: "none",
   segmentTimer: null
 };
 
+state.learnerId = state.account?.user?.id || getLocalLearnerId();
+
 init();
 
 function init() {
   bindEvents();
+  renderAccount();
+  validateSrtField();
   setSyncStatus(API_BASE ? "Connecting API..." : "Local draft");
   render();
   loadContents();
@@ -79,19 +96,28 @@ function bindEvents() {
   els.contentSelect.addEventListener("change", () => loadContent(els.contentSelect.value));
   els.openImport.addEventListener("click", () => els.importDialog.showModal());
   els.closeImport.addEventListener("click", () => els.importDialog.close());
-  els.teacherToggle.addEventListener("click", () => {
+  els.teacherToggle.addEventListener("click", async () => {
     state.teacherVisible = !state.teacherVisible;
+    if (state.teacherVisible) await loadTeacherDashboard();
     renderInsights();
+  });
+  els.loginBtn.addEventListener("click", login);
+  els.accessCode.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") login();
   });
   els.prevBtn.addEventListener("click", previousSentence);
   els.replayBtn.addEventListener("click", () => playCurrentSentence(true));
   els.nextBtn.addEventListener("click", nextSentence);
-  els.toggleSubtitles.addEventListener("click", toggleSubtitles);
+  els.toggleSentenceMask.addEventListener("click", toggleCurrentSentence);
+  els.toggleSubtitles.addEventListener("click", toggleAllSubtitles);
   els.favoriteBtn.addEventListener("click", toggleFavorite);
   els.understoodBtn.addEventListener("click", () => markCurrent("understood"));
   els.unsureBtn.addEventListener("click", () => markCurrent("unsure"));
   els.missedBtn.addEventListener("click", () => markCurrent("missed"));
   els.loadDemoTranscript.addEventListener("click", loadDemoIntoForm);
+  els.importTranscript.addEventListener("input", validateSrtField);
+  els.srtFile.addEventListener("change", readSrtFile);
+  els.generateCaption.addEventListener("click", generateCaption);
   els.importForm.addEventListener("submit", handleImport);
 
   window.addEventListener("keydown", (event) => {
@@ -106,6 +132,32 @@ function bindEvents() {
   });
 }
 
+async function login() {
+  const accessCode = els.accessCode.value.trim();
+  if (!accessCode) return setSyncStatus("请输入访问码");
+  if (!API_BASE) return setSyncStatus("API 未配置");
+
+  try {
+    const account = await api("/api/accounts/login", {
+      method: "POST",
+      body: { access_code: accessCode }
+    });
+    state.account = account;
+    state.learnerId = account.user.id;
+    saveJson("listening.account", account);
+    els.accessCode.value = "";
+    setSyncStatus(`${account.user.display_name} 已进入`);
+    await syncProgress();
+    if (account.user.role === "teacher") {
+      state.teacherVisible = true;
+      await loadTeacherDashboard();
+    }
+    render();
+  } catch (error) {
+    setSyncStatus(`登录失败 · ${error.message}`);
+  }
+}
+
 async function loadContents() {
   if (!API_BASE) {
     state.contents = [state.content];
@@ -115,7 +167,9 @@ async function loadContents() {
 
   try {
     const health = await api("/health");
-    setSyncStatus(`API connected · D1 ${health.database}`);
+    const caption = health.caption_service_configured ? "VideoCaptioner ready" : "VideoCaptioner 待配置";
+    setSyncStatus(`API connected · D1 ${health.database} · ${caption}`);
+    els.captionJobStatus.textContent = caption;
     const data = await api("/api/contents");
     state.contents = data.contents.length ? data.contents.map(normalizeContent) : [state.content];
     renderContentSelect();
@@ -134,6 +188,7 @@ async function loadContent(contentId) {
   if (!API_BASE || contentId.startsWith("local_")) {
     state.content = normalizeContent(local || DEMO_CONTENT);
     state.currentIndex = 0;
+    state.currentSentenceVisible = false;
     render();
     return;
   }
@@ -142,15 +197,17 @@ async function loadContent(contentId) {
     const data = await api(`/api/contents/${encodeURIComponent(contentId)}`);
     state.content = normalizeContent({ ...data.content, sentences: data.sentences });
     state.currentIndex = 0;
+    state.currentSentenceVisible = false;
     await syncProgress();
+    if (state.teacherVisible) await loadTeacherDashboard();
     render();
   } catch (error) {
-    setSyncStatus(`Could not load content · ${error.message}`);
+    setSyncStatus(`内容加载失败 · ${error.message}`);
   }
 }
 
 async function syncProgress() {
-  if (!API_BASE || !state.content?.id) return;
+  if (!API_BASE || !state.content?.id || !state.learnerId) return;
   try {
     const data = await api(`/api/progress?learner_id=${encodeURIComponent(state.learnerId)}&content_id=${encodeURIComponent(state.content.id)}`);
     data.progress.forEach((row) => {
@@ -166,18 +223,48 @@ async function syncProgress() {
     });
     persistProgress();
   } catch (error) {
-    setSyncStatus(`Progress local only · ${error.message}`);
+    setSyncStatus(`进度仅本地 · ${error.message}`);
+  }
+}
+
+async function loadTeacherDashboard() {
+  if (!API_BASE || state.account?.user?.role !== "teacher") {
+    state.teacherDashboard = null;
+    return;
+  }
+
+  try {
+    const query = new URLSearchParams({
+      teacher_id: state.account.user.id,
+      content_id: state.content.id
+    });
+    state.teacherDashboard = await api(`/api/teacher/dashboard?${query}`);
+  } catch (error) {
+    state.teacherDashboard = { error: error.message, students: [] };
   }
 }
 
 function render() {
+  renderAccount();
   renderContentSelect();
   renderMedia();
   renderSentences();
   renderCurrentSentence();
   renderInsights();
-  els.body.classList.toggle("hide-subtitles", !state.subtitlesVisible);
-  els.toggleSubtitles.textContent = state.subtitlesVisible ? "隐藏字幕" : "显示字幕";
+  els.body.classList.toggle("show-all-subtitles", state.allSubtitlesVisible);
+  els.body.classList.toggle("show-current-subtitle", state.currentSentenceVisible);
+  els.toggleSentenceMask.textContent = state.currentSentenceVisible ? "遮蔽本句" : "显示本句";
+  els.toggleSubtitles.textContent = state.allSubtitlesVisible ? "遮蔽全部" : "显示全部";
+}
+
+function renderAccount() {
+  if (!state.account?.user) {
+    els.accountBadge.textContent = "未登录";
+    els.teacherToggle.disabled = true;
+    return;
+  }
+  els.accountBadge.textContent = `${state.account.user.display_name} · ${state.account.user.role === "teacher" ? "老师" : "学生"}`;
+  els.teacherToggle.disabled = state.account.user.role !== "teacher";
 }
 
 function renderContentSelect() {
@@ -207,11 +294,7 @@ function renderMedia() {
       state.ytPlayer = new YT.Player("youtubePlayer", {
         videoId: source.id,
         playerVars: { rel: 0, modestbranding: 1, playsinline: 1 },
-        events: {
-          onReady: () => {
-            state.ytReady = true;
-          }
-        }
+        events: { onReady: () => { state.ytReady = true; } }
       });
     }).catch(() => renderFallback("Video preview unavailable"));
     return;
@@ -240,7 +323,9 @@ function renderSentences() {
     const row = document.createElement("li");
     const progress = state.progress[sentence.id];
     const status = progress?.status || "new";
-    row.className = `sentence ${status} ${index === state.currentIndex ? "active" : ""}`;
+    const isActive = index === state.currentIndex;
+    const isRevealed = state.allSubtitlesVisible || (isActive && state.currentSentenceVisible);
+    row.className = `sentence ${status} ${isActive ? "active" : ""} ${isRevealed ? "revealed" : ""}`;
     row.tabIndex = 0;
     row.innerHTML = `
       <span class="sentence-index">${String(index + 1).padStart(2, "0")}</span>
@@ -249,6 +334,7 @@ function renderSentences() {
     `;
     row.addEventListener("click", () => {
       state.currentIndex = index;
+      state.currentSentenceVisible = false;
       render();
       playCurrentSentence(false);
     });
@@ -259,6 +345,7 @@ function renderSentences() {
 
 function renderCurrentSentence() {
   const sentence = currentSentence();
+  els.currentBlock.classList.toggle("revealed", state.allSubtitlesVisible || state.currentSentenceVisible);
   els.currentIndex.textContent = String(state.currentIndex + 1).padStart(2, "0");
   els.currentTime.textContent = `${formatTime(sentence.start)} - ${formatTime(sentence.end)}`;
   els.currentSentence.textContent = sentence.text;
@@ -271,77 +358,103 @@ function renderInsights() {
   els.yellowCount.textContent = counts.yellow;
   els.redCount.textContent = counts.red;
 
-  const attempted = Object.values(state.progress).filter((item) => item.firstResult).length;
-  const firstPass = Object.values(state.progress).filter((item) => item.firstResult === "understood").length;
+  const attempted = state.content.sentences.filter((sentence) => state.progress[sentence.id]?.firstResult).length;
+  const firstPass = state.content.sentences.filter((sentence) => state.progress[sentence.id]?.firstResult === "understood").length;
   els.accuracyRate.textContent = attempted ? `${Math.round((firstPass / attempted) * 100)}%` : "0%";
 
-  const reviewItems = state.content.sentences
-    .map((sentence, index) => ({ sentence, index, progress: state.progress[sentence.id] }))
-    .filter((item) => ["red", "yellow"].includes(item.progress?.status));
+  const reviewItems = getReviewItems();
   els.reviewSize.textContent = reviewItems.length;
-
-  els.reviewList.replaceChildren(
-    ...reviewItems.map((item) => {
-      const node = document.createElement("div");
-      node.className = `review-item ${item.progress.status}`;
-      node.innerHTML = `<button type="button">${escapeHtml(item.sentence.text)}</button><p>${item.progress.status.toUpperCase()} · ${formatTime(item.sentence.start)}</p>`;
-      node.querySelector("button").addEventListener("click", () => {
-        state.currentIndex = item.index;
-        render();
-        playCurrentSentence(false);
-      });
-      return node;
-    })
-  );
-
-  if (!reviewItems.length) {
-    els.reviewList.innerHTML = '<div class="empty">暂无红黄句</div>';
-  }
+  els.reviewList.replaceChildren(...reviewItems.map(renderReviewItem));
+  if (!reviewItems.length) els.reviewList.innerHTML = '<div class="empty">暂无红黄句</div>';
 
   els.teacherSection.hidden = !state.teacherVisible;
   els.teacherToggle.classList.toggle("primary", state.teacherVisible);
-  if (state.teacherVisible) renderTeacherView(reviewItems);
+  if (state.teacherVisible) renderTeacherView();
 }
 
-function renderTeacherView(reviewItems) {
-  const repeatedWords = extractRepeatedWords(reviewItems.map((item) => item.sentence.text));
-  const nodes = reviewItems.slice(0, 8).map((item) => {
-    const node = document.createElement("div");
-    node.className = `teacher-item ${item.progress.status}`;
-    node.innerHTML = `<strong>${escapeHtml(item.sentence.text)}</strong><p>${item.progress.status} · replay ${item.progress.replayCount || 0} · subtitle ${item.progress.subtitleViews || 0}</p>`;
-    return node;
+function renderReviewItem(item) {
+  const node = document.createElement("div");
+  node.className = `review-item ${item.progress.status}`;
+  node.innerHTML = `<button type="button">${escapeHtml(item.sentence.text)}</button><p>${item.progress.status.toUpperCase()} · ${formatTime(item.sentence.start)}</p>`;
+  node.querySelector("button").addEventListener("click", () => {
+    state.currentIndex = item.index;
+    state.currentSentenceVisible = false;
+    render();
+    playCurrentSentence(false);
   });
+  return node;
+}
 
-  if (repeatedWords.length) {
+function renderTeacherView() {
+  if (state.account?.user?.role !== "teacher") {
+    els.teacherList.innerHTML = '<div class="empty">老师访问码进入后可查看学生卡点</div>';
+    return;
+  }
+
+  if (!state.teacherDashboard) {
+    els.teacherList.innerHTML = '<div class="empty">老师后台加载中</div>';
+    return;
+  }
+
+  if (state.teacherDashboard.error) {
+    els.teacherList.innerHTML = `<div class="empty">老师后台加载失败：${escapeHtml(state.teacherDashboard.error)}</div>`;
+    return;
+  }
+
+  const students = state.teacherDashboard.students || [];
+  if (!students.length) {
+    els.teacherList.innerHTML = '<div class="empty">暂无学生数据</div>';
+    return;
+  }
+
+  els.teacherList.replaceChildren(...students.map((student) => {
     const node = document.createElement("div");
-    node.className = "teacher-item yellow";
-    node.innerHTML = `<strong>${repeatedWords.join(", ")}</strong><p>高频卡词</p>`;
-    nodes.unshift(node);
-  }
+    node.className = "teacher-item";
+    const presence = student.presence
+      ? `听到第 ${student.presence.current_position} 句 · ${escapeHtml(student.presence.text || "")}`
+      : "还没有播放位置";
+    const review = (student.review || []).map((item) =>
+      `<li class="${item.status}">#${item.position} ${escapeHtml(item.text)}</li>`
+    ).join("");
+    node.innerHTML = `
+      <strong>${escapeHtml(student.user.display_name)}</strong>
+      <p>${presence}</p>
+      <div class="mini-counts">
+        <span class="chip-green">${student.counts.green || 0}</span>
+        <span class="chip-yellow">${student.counts.yellow || 0}</span>
+        <span class="chip-red">${student.counts.red || 0}</span>
+      </div>
+      <ul class="teacher-review">${review || "<li>暂无红黄句</li>"}</ul>
+    `;
+    return node;
+  }));
+}
 
-  els.teacherList.replaceChildren(...nodes);
-  if (!nodes.length) {
-    els.teacherList.innerHTML = '<div class="empty">还没有可诊断的卡点</div>';
-  }
+function getReviewItems() {
+  return state.content.sentences
+    .map((sentence, index) => ({ sentence, index, progress: state.progress[sentence.id] }))
+    .filter((item) => ["red", "yellow"].includes(item.progress?.status));
 }
 
 function previousSentence() {
   state.currentIndex = Math.max(0, state.currentIndex - 1);
+  state.currentSentenceVisible = false;
   render();
   playCurrentSentence(false);
 }
 
 function nextSentence() {
   state.currentIndex = Math.min(state.content.sentences.length - 1, state.currentIndex + 1);
+  state.currentSentenceVisible = false;
   render();
   playCurrentSentence(false);
 }
 
 function playCurrentSentence(isReplay) {
   const sentence = currentSentence();
-  const count = (state.playbackCounts[sentence.id] || 0) + 1;
-  state.playbackCounts[sentence.id] = count;
+  state.playbackCounts[sentence.id] = (state.playbackCounts[sentence.id] || 0) + 1;
   saveJson("listening.playbackCounts", state.playbackCounts);
+  recordHeard(sentence);
   stopSegmentTimer();
 
   if (state.mediaKind === "youtube" && state.ytPlayer && state.ytReady) {
@@ -371,6 +484,23 @@ function playCurrentSentence(isReplay) {
   if (isReplay) renderInsights();
 }
 
+async function recordHeard(sentence) {
+  if (!API_BASE || !state.account?.user || state.content.id.startsWith("local_")) return;
+  try {
+    await api("/api/heard", {
+      method: "POST",
+      body: {
+        student_id: state.account.user.id,
+        content_id: state.content.id,
+        sentence_id: sentence.id,
+        play_count: 1
+      }
+    });
+  } catch {
+    // Playback must not be blocked by presence sync.
+  }
+}
+
 async function markCurrent(result) {
   const sentence = currentSentence();
   const current = state.progress[sentence.id] || {};
@@ -378,7 +508,7 @@ async function markCurrent(result) {
   const nextStatus = transitionStatus(previousStatus, result);
   const now = new Date().toISOString();
   const replayCount = state.playbackCounts[sentence.id] || 0;
-  const subtitleViews = state.subtitlesVisible ? 1 : 0;
+  const subtitleVisible = state.allSubtitlesVisible || state.currentSentenceVisible;
 
   state.progress[sentence.id] = {
     ...current,
@@ -387,7 +517,7 @@ async function markCurrent(result) {
     firstResult: current.firstResult || result,
     lastResult: result,
     replayCount: (current.replayCount || 0) + replayCount,
-    subtitleViews: (current.subtitleViews || 0) + subtitleViews,
+    subtitleViews: (current.subtitleViews || 0) + (subtitleVisible ? 1 : 0),
     updatedAt: now
   };
   state.playbackCounts[sentence.id] = 0;
@@ -395,7 +525,7 @@ async function markCurrent(result) {
   saveJson("listening.playbackCounts", state.playbackCounts);
   render();
 
-  if (API_BASE) {
+  if (API_BASE && !state.content.id.startsWith("local_")) {
     try {
       await api("/api/attempts", {
         method: "POST",
@@ -405,43 +535,51 @@ async function markCurrent(result) {
           sentence_id: sentence.id,
           result,
           evidence_type: "self_report",
-          showed_subtitle: state.subtitlesVisible,
+          showed_subtitle: subtitleVisible,
           replay_count: replayCount
         }
       });
       setSyncStatus("Progress synced");
+      if (state.teacherVisible) await loadTeacherDashboard();
     } catch (error) {
-      setSyncStatus(`Progress local only · ${error.message}`);
+      setSyncStatus(`进度仅本地 · ${error.message}`);
     }
   }
 
-  if (nextStatus === "green") {
-    moveToNextReviewCandidate();
-  }
+  if (nextStatus === "green") moveToNextReviewCandidate();
 }
 
 function moveToNextReviewCandidate() {
-  const sentences = state.content.sentences;
-  const next = sentences.findIndex((sentence, index) => index > state.currentIndex && state.progress[sentence.id]?.status !== "green");
+  const next = state.content.sentences.findIndex((sentence, index) =>
+    index > state.currentIndex && state.progress[sentence.id]?.status !== "green"
+  );
   if (next >= 0) {
     state.currentIndex = next;
+    state.currentSentenceVisible = false;
     render();
     playCurrentSentence(false);
   }
 }
 
-function toggleSubtitles() {
-  state.subtitlesVisible = !state.subtitlesVisible;
-  if (state.subtitlesVisible) {
-    const sentence = currentSentence();
-    const current = state.progress[sentence.id] || {};
-    state.progress[sentence.id] = {
-      ...current,
-      subtitleViews: (current.subtitleViews || 0) + 1
-    };
-    persistProgress();
-  }
+function toggleCurrentSentence() {
+  state.currentSentenceVisible = !state.currentSentenceVisible;
+  if (state.currentSentenceVisible) noteSubtitleView(currentSentence());
   render();
+}
+
+function toggleAllSubtitles() {
+  state.allSubtitlesVisible = !state.allSubtitlesVisible;
+  if (state.allSubtitlesVisible) noteSubtitleView(currentSentence());
+  render();
+}
+
+function noteSubtitleView(sentence) {
+  const current = state.progress[sentence.id] || {};
+  state.progress[sentence.id] = {
+    ...current,
+    subtitleViews: (current.subtitleViews || 0) + 1
+  };
+  persistProgress();
 }
 
 function toggleFavorite() {
@@ -455,9 +593,11 @@ async function handleImport(event) {
   event.preventDefault();
   const title = els.importTitle.value.trim() || "Untitled listening content";
   const sourceUrl = els.importUrl.value.trim();
-  const sentences = parseTranscript(els.importTranscript.value);
-  if (!sentences.length) {
-    setSyncStatus("Import failed · no sentences");
+  const srt = els.importTranscript.value;
+  const parsed = parseStrictSrt(srt);
+  if (!parsed.ok) {
+    renderSrtValidation(parsed);
+    setSyncStatus("SRT 未通过校验");
     return;
   }
 
@@ -466,7 +606,7 @@ async function handleImport(event) {
     title,
     source_url: sourceUrl,
     ...parseSource(sourceUrl),
-    sentences
+    sentences: parsed.sentences
   });
 
   if (API_BASE) {
@@ -476,84 +616,178 @@ async function handleImport(event) {
         body: {
           title,
           source_url: sourceUrl,
-          sentences
+          user_id: state.account?.user?.id,
+          srt
         }
       });
       const remote = normalizeContent({ ...data.content, sentences: data.sentences });
       state.contents.unshift(remote);
       state.content = remote;
       state.currentIndex = 0;
-      setSyncStatus("Content saved to D1");
+      state.currentSentenceVisible = false;
+      setSyncStatus("SRT 已保存到 D1");
     } catch (error) {
       state.contents.unshift(localContent);
       state.content = localContent;
-      setSyncStatus(`Saved locally · ${error.message}`);
+      setSyncStatus(`已本地保存 · ${error.message}`);
     }
   } else {
     state.contents.unshift(localContent);
     state.content = localContent;
-    setSyncStatus("Saved locally");
+    setSyncStatus("已本地保存");
   }
 
   els.importDialog.close();
   els.importForm.reset();
+  validateSrtField();
   render();
+}
+
+async function generateCaption() {
+  const title = els.importTitle.value.trim() || "Untitled listening content";
+  const sourceUrl = els.importUrl.value.trim();
+  if (!sourceUrl) return setCaptionStatus("先填视频 URL");
+  if (!API_BASE) return setCaptionStatus("API 未配置");
+
+  setCaptionStatus("提交中...");
+  try {
+    const data = await api("/api/caption-jobs", {
+      method: "POST",
+      body: {
+        title,
+        source_url: sourceUrl,
+        user_id: state.account?.user?.id,
+        language: "en"
+      }
+    });
+
+    if (data.content) {
+      const remote = normalizeContent({ ...data.content.content, sentences: data.content.sentences });
+      state.contents.unshift(remote);
+      state.content = remote;
+      state.currentIndex = 0;
+      setCaptionStatus("字幕已生成并导入");
+      render();
+      return;
+    }
+
+    setCaptionStatus(data.message || `任务状态：${data.job.status}`);
+  } catch (error) {
+    setCaptionStatus(`字幕任务失败：${error.message}`);
+  }
+}
+
+async function readSrtFile() {
+  const file = els.srtFile.files?.[0];
+  if (!file) return;
+  const text = await file.text();
+  els.importTranscript.value = text;
+  validateSrtField();
+}
+
+function validateSrtField() {
+  const raw = els.importTranscript.value.trim();
+  if (!raw) {
+    els.srtValidation.textContent = "等待 SRT";
+    els.srtValidation.className = "validation-box";
+    return;
+  }
+  renderSrtValidation(parseStrictSrt(raw));
+}
+
+function renderSrtValidation(result) {
+  if (result.ok) {
+    els.srtValidation.textContent = `SRT 通过 · ${result.sentences.length} 句`;
+    els.srtValidation.className = "validation-box ok";
+    return;
+  }
+  els.srtValidation.innerHTML = `SRT 错误：<br>${result.errors.slice(0, 5).map(escapeHtml).join("<br>")}`;
+  els.srtValidation.className = "validation-box error";
 }
 
 function loadDemoIntoForm() {
   els.importTitle.value = "Demo: bilingual brain listening drill";
   els.importUrl.value = "https://www.youtube.com/watch?v=MMmOLN5zBLY";
   els.importTranscript.value = DEMO_CONTENT.sentences
-    .map((sentence) => `${formatTime(sentence.start)} - ${formatTime(sentence.end)} ${sentence.text}`)
-    .join("\n");
+    .map((sentence, index) => [
+      String(index + 1),
+      `${formatSrtTime(sentence.start)} --> ${formatSrtTime(sentence.end)}`,
+      sentence.text
+    ].join("\n"))
+    .join("\n\n");
+  validateSrtField();
 }
 
-function parseTranscript(raw) {
-  const lines = raw.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-  const parsed = lines.map((line, index) => {
-    const match = line.match(/^\[?(\d{1,2}:\d{2}(?::\d{2})?(?:[\.,]\d{1,3})?)\]?\s*(?:[-–]|-->|to)?\s*\[?(\d{1,2}:\d{2}(?::\d{2})?(?:[\.,]\d{1,3})?)?\]?\s*(.*)$/i);
-    if (match && match[3]) {
-      return {
-        start: toSeconds(match[1]),
-        end: match[2] ? toSeconds(match[2]) : null,
-        text: match[3].trim()
-      };
+function parseStrictSrt(raw) {
+  const normalized = String(raw || "").replace(/^\uFEFF/, "").replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim();
+  if (!normalized) return { ok: false, errors: ["SRT 为空"], sentences: [] };
+
+  const blocks = normalized.split(/\n{2,}/);
+  const errors = [];
+  const sentences = [];
+  let previousEnd = -1;
+
+  blocks.forEach((block, blockIndex) => {
+    const expectedIndex = blockIndex + 1;
+    const lines = block.split("\n").map((line) => line.trimEnd());
+    const numberLine = (lines[0] || "").trim();
+    const timeLine = (lines[1] || "").trim();
+    const textLines = lines.slice(2).filter((line) => line.trim());
+
+    if (!/^\d+$/.test(numberLine)) {
+      errors.push(`第 ${expectedIndex} 段缺少数字序号`);
+      return;
     }
-    return {
-      start: index * 4,
-      end: index * 4 + 4,
-      text: line
-    };
+
+    const actualIndex = Number.parseInt(numberLine, 10);
+    if (actualIndex !== expectedIndex) {
+      errors.push(`第 ${expectedIndex} 段序号应为 ${expectedIndex}，实际为 ${actualIndex}`);
+    }
+
+    const timeMatch = timeLine.match(/^(\d{2,}:\d{2}:\d{2},\d{3})\s+-->\s+(\d{2,}:\d{2}:\d{2},\d{3})(?:\s+.*)?$/);
+    if (!timeMatch) {
+      errors.push(`第 ${expectedIndex} 段时间轴格式错误`);
+      return;
+    }
+
+    const startMs = parseSrtTime(timeMatch[1]);
+    const endMs = parseSrtTime(timeMatch[2]);
+    if (startMs === null || endMs === null) {
+      errors.push(`第 ${expectedIndex} 段时间戳无效`);
+      return;
+    }
+    if (startMs >= endMs) errors.push(`第 ${expectedIndex} 段开始时间不能晚于结束时间`);
+    if (previousEnd > startMs) errors.push(`第 ${expectedIndex} 段与上一段重叠`);
+    if (!textLines.length) errors.push(`第 ${expectedIndex} 段字幕为空`);
+
+    previousEnd = Math.max(previousEnd, endMs);
+    sentences.push({
+      id: `local_sentence_${blockIndex + 1}`,
+      position: expectedIndex,
+      start_ms: startMs,
+      end_ms: endMs,
+      start: startMs / 1000,
+      end: endMs / 1000,
+      text: textLines.join(" ").replace(/\s+/g, " ").trim()
+    });
   });
 
-  parsed.forEach((item, index) => {
-    if (item.end === null) {
-      item.end = parsed[index + 1]?.start || item.start + 4;
-    }
-  });
-
-  return regroupFragments(parsed).map((item, index) => ({
-    id: `local_sentence_${Date.now()}_${index}`,
-    position: index + 1,
-    start: item.start,
-    end: Math.max(item.end, item.start + 0.5),
-    text: item.text
-  }));
+  return { ok: errors.length === 0, errors, sentences };
 }
 
-function regroupFragments(items) {
-  const result = [];
-  for (const item of items) {
-    const previous = result[result.length - 1];
-    const shouldMerge = previous && !/[.!?。？！]$/.test(previous.text) && item.start - previous.end <= 1.2;
-    if (shouldMerge) {
-      previous.text = `${previous.text} ${item.text}`.replace(/\s+/g, " ").trim();
-      previous.end = item.end;
-    } else {
-      result.push({ ...item });
-    }
-  }
-  return result;
+function parseSrtTime(value) {
+  const match = String(value).match(/^(\d{2,}):([0-5]\d):([0-5]\d),(\d{3})$/);
+  if (!match) return null;
+  return (Number(match[1]) * 3600 + Number(match[2]) * 60 + Number(match[3])) * 1000 + Number(match[4]);
+}
+
+function formatSrtTime(seconds) {
+  const ms = Math.max(0, Math.round((Number(seconds) || 0) * 1000));
+  const hours = Math.floor(ms / 3600000);
+  const minutes = Math.floor((ms % 3600000) / 60000);
+  const secs = Math.floor((ms % 60000) / 1000);
+  const millis = ms % 1000;
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")},${String(millis).padStart(3, "0")}`;
 }
 
 function transitionStatus(previousStatus, result) {
@@ -572,7 +806,7 @@ function countStatuses() {
 }
 
 function currentSentence() {
-  return state.content.sentences[state.currentIndex] || state.content.sentences[0];
+  return state.content.sentences[state.currentIndex] || state.content.sentences[0] || { id: "empty", start: 0, end: 0, text: "" };
 }
 
 function normalizeContent(content) {
@@ -581,6 +815,8 @@ function normalizeContent(content) {
     position: sentence.position || index + 1,
     start: Number.isFinite(sentence.start) ? sentence.start : (sentence.start_ms || 0) / 1000,
     end: Number.isFinite(sentence.end) ? sentence.end : (sentence.end_ms || 0) / 1000,
+    start_ms: Number.isFinite(sentence.start_ms) ? sentence.start_ms : Math.round((sentence.start || 0) * 1000),
+    end_ms: Number.isFinite(sentence.end_ms) ? sentence.end_ms : Math.round((sentence.end || 0) * 1000),
     text: sentence.text || ""
   }));
   return {
@@ -609,31 +845,15 @@ function formatTime(seconds) {
   return `${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
 }
 
-function toSeconds(stamp) {
-  const normalized = String(stamp).replace(",", ".");
-  const parts = normalized.split(":").map(Number);
-  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
-  if (parts.length === 2) return parts[0] * 60 + parts[1];
-  return Number(normalized) || 0;
-}
-
-function extractRepeatedWords(lines) {
-  const stop = new Set(["that", "with", "this", "from", "only", "after", "where", "when", "then", "does", "have", "into", "will", "your", "they"]);
-  const counts = new Map();
-  lines.join(" ").toLowerCase().match(/[a-z']{4,}/g)?.forEach((word) => {
-    if (!stop.has(word)) counts.set(word, (counts.get(word) || 0) + 1);
-  });
-  return [...counts.entries()].filter(([, count]) => count >= 1).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([word]) => word);
-}
-
 async function api(path, options = {}) {
   const response = await fetch(`${API_BASE}${path}`, {
     method: options.method || "GET",
     headers: { "content-type": "application/json" },
     body: options.body ? JSON.stringify(options.body) : undefined
   });
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.error || response.statusText);
+  const text = await response.text();
+  const data = text ? JSON.parse(text) : {};
+  if (!response.ok) throw new Error(data.details ? `${data.error}: ${data.details.join("; ")}` : (data.error || response.statusText));
   return data;
 }
 
@@ -641,11 +861,15 @@ function setSyncStatus(text) {
   els.syncStatus.textContent = text;
 }
 
+function setCaptionStatus(text) {
+  els.captionJobStatus.textContent = text;
+}
+
 function persistProgress() {
   saveJson("listening.progress", state.progress);
 }
 
-function getLearnerId() {
+function getLocalLearnerId() {
   const existing = localStorage.getItem("listening.learnerId");
   if (existing) return existing;
   const created = `learner_${crypto.randomUUID()}`;
@@ -677,12 +901,9 @@ function loadYouTubeApi() {
   if (window.__listeningYouTubeApiPromise) return window.__listeningYouTubeApiPromise;
 
   window.__listeningYouTubeApiPromise = new Promise((resolve, reject) => {
+    window.onYouTubeIframeAPIReady = () => resolve();
     const script = document.createElement("script");
     script.src = "https://www.youtube.com/iframe_api";
-    script.onload = () => {
-      window.onYouTubeIframeAPIReady = () => resolve();
-      if (window.YT?.Player) resolve();
-    };
     script.onerror = reject;
     document.head.append(script);
   });
@@ -696,4 +917,3 @@ function escapeHtml(value) {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
 }
-

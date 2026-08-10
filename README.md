@@ -21,6 +21,10 @@ npx http-server docs -p 4173
 ## API
 
 - `GET /health`
+- `POST /api/accounts/login`
+- `GET /api/teacher/dashboard?teacher_id=...&content_id=...`
+- `POST /api/heard`
+- `POST /api/caption-jobs`
 - `GET /api/contents`
 - `POST /api/contents`
 - `GET /api/contents/:id`
@@ -35,3 +39,29 @@ npx http-server docs -p 4173
 - 红句复听懂：黄
 - 黄句再次听懂：绿
 
+## Demo accounts
+
+- Teacher access code: `teacher-demo`
+- Student access code: `student-demo`
+
+Student playback position is stored in `listening_presence`. Teacher dashboard reads each student's current sentence and red/yellow checkpoints.
+
+## VideoCaptioner
+
+Cloudflare Worker does not run VideoCaptioner directly. It calls an HTTP service through `VIDEOCAPTIONER_API_BASE`.
+
+Expected service shape for the first adapter:
+
+```http
+POST /jobs
+Content-Type: application/json
+
+{
+  "title": "...",
+  "source_url": "https://...",
+  "output": "srt",
+  "language": "en"
+}
+```
+
+The response can either return `{"status":"processing","job_id":"..."}` or return `{"srt":"..."}` directly. Returned SRT is strictly validated before it is saved.

@@ -86,6 +86,25 @@ button {
   justify-content: flex-end;
 }
 
+.account-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+}
+
+.account-box input {
+  width: 120px;
+  height: 40px;
+  padding: 0 10px;
+}
+
+#accountBadge {
+  color: var(--muted);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
 select,
 input,
 textarea {
@@ -135,6 +154,13 @@ select {
 .mark:hover,
 .sentence:hover {
   transform: translateY(-1px);
+}
+
+.command:disabled,
+.icon-command:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+  transform: none;
 }
 
 .primary {
@@ -270,11 +296,20 @@ select {
   background: var(--red);
 }
 
+.mask-subtitles .sentence:not(.revealed) .sentence-text,
+.mask-subtitles .current-block:not(.revealed) .current-sentence,
 .hide-subtitles .sentence-text,
 .hide-subtitles .current-sentence {
   color: transparent;
   text-shadow: 0 0 9px rgba(24, 27, 31, 0.5);
   user-select: none;
+}
+
+.sentence.revealed .sentence-text,
+.current-block.revealed .current-sentence {
+  color: var(--ink);
+  text-shadow: none;
+  user-select: text;
 }
 
 .player-panel {
@@ -442,6 +477,33 @@ select {
   line-height: 1.45;
 }
 
+.mini-counts {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  font-weight: 850;
+}
+
+.teacher-review {
+  margin: 10px 0 0;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.teacher-review li {
+  margin-bottom: 6px;
+}
+
+.teacher-review li.red {
+  color: var(--red);
+}
+
+.teacher-review li.yellow {
+  color: var(--yellow);
+}
+
 .empty {
   color: var(--muted);
   border: 1px dashed var(--line);
@@ -474,6 +536,18 @@ select {
   gap: 12px;
 }
 
+.caption-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.caption-actions span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .dialog-head h2 {
   margin: 0;
   font-size: 18px;
@@ -498,6 +572,28 @@ textarea {
   min-height: 220px;
   resize: vertical;
   line-height: 1.5;
+}
+
+.validation-box {
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  padding: 11px 12px;
+  color: var(--muted);
+  background: #fbfcfd;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.validation-box.ok {
+  border-color: rgba(31, 138, 76, 0.35);
+  color: var(--green);
+  background: rgba(31, 138, 76, 0.06);
+}
+
+.validation-box.error {
+  border-color: rgba(194, 65, 58, 0.35);
+  color: var(--red);
+  background: rgba(194, 65, 58, 0.06);
 }
 
 @media (max-width: 1180px) {
@@ -526,6 +622,15 @@ textarea {
     width: 100%;
   }
 
+  .account-box {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .account-box input {
+    flex: 1 1 160px;
+  }
+
   .study-grid {
     grid-template-columns: 1fr;
   }
@@ -544,4 +649,3 @@ textarea {
     grid-template-columns: 1fr;
   }
 }
-
