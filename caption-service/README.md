@@ -48,6 +48,10 @@ GET /jobs/cap_...
 - `GROQ_API_BASE`：默认 `https://api.groq.com/openai/v1`。
 - `GROQ_WHISPER_MODEL`：默认 `whisper-large-v3-turbo`。
 - `YTDLP_FORMAT`：默认 `bestaudio/best`。
+- `YTDLP_COOKIES_FILE`：可选，Netscape `cookies.txt` 路径，用于绕过 YouTube bot / 登录态校验。
+- `YTDLP_COOKIES_FROM_BROWSER`：可选，本地开发可设为 `chrome` 或 `edge`，但浏览器运行时可能因 Cookie 数据库被占用而失败。
+- `YTDLP_JS_RUNTIMES`：可选，本机建议设为 `node`，用于解决 YouTube JS challenge。
+- `YTDLP_REMOTE_COMPONENTS`：可选，本机建议设为 `ejs:github`，让 yt-dlp 下载官方 JS challenge solver。
 - `CAPTION_AUDIO_BITRATE`：默认 `64k`。
 - `CAPTION_AUDIO_SAMPLE_RATE`：默认 `16000`。
 - `GROQ_MAX_UPLOAD_BYTES`：默认 `25000000`；超过后切片上传。

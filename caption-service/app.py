@@ -193,20 +193,20 @@ def assert_runtime_ready() -> None:
 
 def download_media(source_url: str, directory: Path) -> Path:
     before = {path.resolve() for path in directory.rglob("*") if path.is_file()}
-    run_command(
-        [
-            "yt-dlp",
-            "--no-playlist",
-            "--no-warnings",
-            "--restrict-filenames",
-            "-f",
-            os.getenv("YTDLP_FORMAT", "bestaudio/best"),
-            "-o",
-            str(directory / "source.%(ext)s"),
-            source_url,
-        ],
-        cwd=directory,
-    )
+    command = [
+        "yt-dlp",
+        "--no-playlist",
+        "--no-warnings",
+        "--restrict-filenames",
+        "-f",
+        os.getenv("YTDLP_FORMAT", "bestaudio/best"),
+        "-o",
+        str(directory / "source.%(ext)s"),
+    ]
+    command.extend(yt_dlp_js_args())
+    command.extend(yt_dlp_cookie_args())
+    command.append(source_url)
+    run_command(command, cwd=directory)
     after = [path for path in directory.rglob("*") if path.is_file() and path.resolve() not in before]
     candidates = [path for path in after if path.suffix.lower() in MEDIA_EXTENSIONS]
     if not candidates:
@@ -214,6 +214,34 @@ def download_media(source_url: str, directory: Path) -> Path:
     if not candidates:
         raise RuntimeError("yt-dlp finished but no media file was found")
     return max(candidates, key=lambda path: (path.stat().st_size, path.stat().st_mtime))
+
+
+def yt_dlp_cookie_args() -> list[str]:
+    cookies_file = os.getenv("YTDLP_COOKIES_FILE", "").strip()
+    if cookies_file:
+        path = Path(cookies_file).expanduser()
+        if not path.exists():
+            raise RuntimeError(f"YTDLP_COOKIES_FILE does not exist: {path}")
+        return ["--cookies", str(path)]
+
+    cookies_from_browser = os.getenv("YTDLP_COOKIES_FROM_BROWSER", "").strip()
+    if cookies_from_browser:
+        return ["--cookies-from-browser", cookies_from_browser]
+
+    return []
+
+
+def yt_dlp_js_args() -> list[str]:
+    args: list[str] = []
+    js_runtimes = os.getenv("YTDLP_JS_RUNTIMES", "").strip()
+    if js_runtimes:
+        args.extend(["--js-runtimes", js_runtimes])
+
+    remote_components = os.getenv("YTDLP_REMOTE_COMPONENTS", "").strip()
+    if remote_components:
+        args.extend(["--remote-components", remote_components])
+
+    return args
 
 
 def extract_audio(input_path: Path, output_path: Path) -> Path:

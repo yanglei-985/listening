@@ -2,6 +2,7 @@ node_modules/
 .wrangler/
 .dev.vars
 dist/
+artifacts/
 *.log
 caption-service/.venv/
 caption-service/.env

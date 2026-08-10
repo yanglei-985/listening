@@ -24,7 +24,9 @@ export class CaptionContainer extends Container {
       CAPTION_CHUNK_SECONDS: env.CAPTION_CHUNK_SECONDS || "600",
       CAPTION_AUDIO_BITRATE: env.CAPTION_AUDIO_BITRATE || "64k",
       CAPTION_AUDIO_SAMPLE_RATE: env.CAPTION_AUDIO_SAMPLE_RATE || "16000",
-      CAPTION_WORKDIR: env.CAPTION_WORKDIR || "/data/caption-service"
+      CAPTION_WORKDIR: env.CAPTION_WORKDIR || "/data/caption-service",
+      YTDLP_JS_RUNTIMES: env.YTDLP_JS_RUNTIMES || "node",
+      YTDLP_REMOTE_COMPONENTS: env.YTDLP_REMOTE_COMPONENTS || "ejs:github"
     };
     this.envVars = Object.fromEntries(
       Object.entries(envVars).filter(([, value]) => value !== undefined && value !== null && value !== "")
