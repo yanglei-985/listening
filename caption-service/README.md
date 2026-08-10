@@ -1,9 +1,16 @@
-# VideoCaptioner HTTP Adapter
+# Listening Caption Pipeline
 
-This service wraps the `videocaptioner` CLI so the Listening Worker can submit
-video URLs and later poll for strict SRT output.
+这是放进 Cloudflare Containers 的字幕处理容器，不是浏览器脚本，也不是普通 Cloudflare Worker。
 
-## Contract
+它不把 YouTube URL 直接发给 Groq。Groq 只接收音频文件：
+
+1. `yt-dlp` 下载 YouTube / Bilibili / TED-Ed 等视频或音频。
+2. `ffmpeg` 抽取单声道压缩 MP3。
+3. Groq 通过 OpenAI-compatible `/audio/transcriptions` 接收音频文件。
+4. 服务将 Groq 的 segment timestamps 转成严格 SRT。
+5. Worker 轮询容器任务，把通过校验的 SRT 写入 D1。
+
+## HTTP contract
 
 ```http
 POST /jobs
@@ -17,61 +24,45 @@ Content-Type: application/json
 }
 ```
 
-Immediate response:
+返回处理中：
 
 ```json
-{ "status": "processing", "job_id": "vc_..." }
+{ "status": "processing", "job_id": "cap_..." }
 ```
 
-Poll:
+轮询：
 
 ```http
-GET /jobs/vc_...
+GET /jobs/cap_...
 ```
 
-Complete response:
+完成：
 
 ```json
-{ "status": "complete", "job_id": "vc_...", "srt": "1\n00:00:00,000 --> ..." }
+{ "status": "complete", "job_id": "cap_...", "srt": "1\n00:00:00,000 --> ..." }
 ```
 
-## Run locally
+## Environment variables
 
-```bash
+- `GROQ_API_KEY`：必填，由 Worker Secret 注入到 Container。
+- `GROQ_API_BASE`：默认 `https://api.groq.com/openai/v1`。
+- `GROQ_WHISPER_MODEL`：默认 `whisper-large-v3-turbo`。
+- `YTDLP_FORMAT`：默认 `bestaudio/best`。
+- `CAPTION_AUDIO_BITRATE`：默认 `64k`。
+- `CAPTION_AUDIO_SAMPLE_RATE`：默认 `16000`。
+- `GROQ_MAX_UPLOAD_BYTES`：默认 `25000000`；超过后切片上传。
+- `CAPTION_CHUNK_SECONDS`：默认 `600`。
+- `CAPTION_TEST_MODE=1`：返回假的合法 SRT，用于集成测试。
+
+## Local smoke test
+
+```powershell
 cd caption-service
 python -m venv .venv
-source .venv/bin/activate
+.\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-export GROQ_API_KEY="gsk_..."
-export GROQ_API_BASE="https://api.groq.com/openai/v1"
-export GROQ_WHISPER_MODEL="whisper-large-v3-turbo"
+$env:CAPTION_TEST_MODE = "1"
 uvicorn app:app --host 0.0.0.0 --port 8080
 ```
 
-## Docker
-
-```bash
-docker build -t listening-caption-service ./caption-service
-docker run -d --name listening-caption-service \
-  -p 8080:8080 \
-  -e GROQ_API_KEY="gsk_..." \
-  -e GROQ_API_BASE="https://api.groq.com/openai/v1" \
-  -e GROQ_WHISPER_MODEL="whisper-large-v3-turbo" \
-  -v listening-caption-data:/data/caption-service \
-  listening-caption-service
-```
-
-Then set the Worker variable:
-
-```bash
-wrangler deploy --var VIDEOCAPTIONER_API_BASE:https://your-caption-service.example.com
-```
-
-Or set it in `wrangler.toml` / Cloudflare dashboard and redeploy.
-
-## Notes
-
-- `GROQ_API_KEY` stays only on this server.
-- The Worker calls this service, not Groq directly.
-- The service validates SRT strictly before returning it.
-- `CAPTION_TEST_MODE=1` returns a fake valid SRT for local integration tests.
+Cloudflare 线上运行时由 `wrangler.toml` 的 `[[containers]]` 构建 Dockerfile。

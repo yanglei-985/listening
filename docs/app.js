@@ -167,7 +167,7 @@ async function loadContents() {
 
   try {
     const health = await api("/health");
-    const caption = health.caption_service_configured ? "VideoCaptioner ready" : "VideoCaptioner 待配置";
+    const caption = health.caption_service_configured ? "字幕容器 ready" : "字幕容器待配置";
     setSyncStatus(`API connected · D1 ${health.database} · ${caption}`);
     els.captionJobStatus.textContent = caption;
     const data = await api("/api/contents");
@@ -692,7 +692,7 @@ async function pollCaptionJob(jobId) {
     }
 
     if (data.job?.status === "failed") {
-      setCaptionStatus(`字幕任务失败：${data.job.error_message || "VideoCaptioner failed"}`);
+      setCaptionStatus(`字幕任务失败：${data.job.error_message || "Caption container failed"}`);
       return;
     }
 

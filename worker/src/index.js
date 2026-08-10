@@ -1,9 +1,36 @@
+import { Container, getContainer } from "@cloudflare/containers";
+
 const JSON_HEADERS = {
   "content-type": "application/json; charset=utf-8",
   "access-control-allow-origin": "*",
   "access-control-allow-methods": "GET,POST,OPTIONS",
   "access-control-allow-headers": "content-type"
 };
+
+const CAPTION_CONTAINER_NAME = "listening-caption";
+
+export class CaptionContainer extends Container {
+  defaultPort = 8080;
+  sleepAfter = "30m";
+  enableInternet = true;
+
+  constructor(ctx, env, options) {
+    super(ctx, env, options);
+    const envVars = {
+      GROQ_API_KEY: env.GROQ_API_KEY,
+      GROQ_API_BASE: env.GROQ_API_BASE || "https://api.groq.com/openai/v1",
+      GROQ_WHISPER_MODEL: env.GROQ_WHISPER_MODEL || "whisper-large-v3-turbo",
+      GROQ_MAX_UPLOAD_BYTES: env.GROQ_MAX_UPLOAD_BYTES || "25000000",
+      CAPTION_CHUNK_SECONDS: env.CAPTION_CHUNK_SECONDS || "600",
+      CAPTION_AUDIO_BITRATE: env.CAPTION_AUDIO_BITRATE || "64k",
+      CAPTION_AUDIO_SAMPLE_RATE: env.CAPTION_AUDIO_SAMPLE_RATE || "16000",
+      CAPTION_WORKDIR: env.CAPTION_WORKDIR || "/data/caption-service"
+    };
+    this.envVars = Object.fromEntries(
+      Object.entries(envVars).filter(([, value]) => value !== undefined && value !== null && value !== "")
+    );
+  }
+}
 
 export default {
   async fetch(request, env) {
@@ -48,12 +75,14 @@ export default {
 async function health(env) {
   const content = await env.DB.prepare("SELECT COUNT(*) AS content_count FROM contents").first();
   const users = await env.DB.prepare("SELECT COUNT(*) AS user_count FROM users").first().catch(() => ({ user_count: 0 }));
+  const captionService = getCaptionService(env);
   return {
     ok: true,
     database: "listening",
     content_count: content?.content_count ?? 0,
     user_count: users?.user_count ?? 0,
-    caption_service_configured: Boolean(getCaptionBase(env)),
+    caption_service_configured: captionService.configured,
+    caption_service_mode: captionService.kind,
     checked_at: new Date().toISOString()
   };
 }
@@ -211,25 +240,34 @@ async function createCaptionJob(request, env) {
 
   const jobId = `caption_${crypto.randomUUID()}`;
   const now = new Date().toISOString();
-  const captionBase = getCaptionBase(env);
+  const captionService = getCaptionService(env);
 
   await env.DB.prepare(`
     INSERT INTO caption_jobs (
       id, requested_by_user_id, title, source_url, status, provider, created_at, updated_at
     )
-    VALUES (?, ?, ?, ?, ?, 'videocaptioner', ?, ?)
-  `).bind(jobId, requestedBy || null, title, sourceUrl, captionBase ? "queued" : "waiting_for_service", now, now).run();
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(
+    jobId,
+    requestedBy || null,
+    title,
+    sourceUrl,
+    captionService.configured ? "queued" : "waiting_for_service",
+    captionService.kind === "container" ? "cloudflare-container" : "videocaptioner",
+    now,
+    now
+  ).run();
 
-  if (!captionBase) {
+  if (!captionService.configured) {
     return {
       job: await readCaptionJob(env, jobId),
       caption_service_configured: false,
-      message: "VideoCaptioner service URL is not configured yet"
+      message: "Cloudflare caption container is not configured yet"
     };
   }
 
   try {
-    const remote = await callCaptionService(captionBase, "/jobs", {
+    const remote = await callCaptionService(env, captionService, "/jobs", {
       title,
       source_url: sourceUrl,
       output: "srt",
@@ -246,7 +284,7 @@ async function createCaptionJob(request, env) {
     let content = null;
     if (update.resultSrt) {
       const parsed = parseStrictSrt(update.resultSrt);
-      if (!parsed.ok) throw httpError(502, "VideoCaptioner returned invalid SRT", parsed.errors);
+      if (!parsed.ok) throw httpError(502, "Caption container returned invalid SRT", parsed.errors);
       content = await createContentFromSentences(env, {
         title,
         sourceUrl,
@@ -264,7 +302,7 @@ async function createCaptionJob(request, env) {
   } catch (error) {
     await updateCaptionJob(env, jobId, {
       status: "failed",
-      error: error.message || "VideoCaptioner request failed"
+      error: error.message || "Caption container request failed"
     });
     throw error;
   }
@@ -274,23 +312,28 @@ async function getCaptionJob(env, jobId) {
   let job = await readCaptionJob(env, jobId);
   if (!job) throw httpError(404, "Caption job not found");
 
-  const captionBase = getCaptionBase(env);
+  const captionService = getCaptionService(env);
   let content = null;
   if (job.content_id) {
     content = await getContent(env, job.content_id).catch(() => null);
   }
 
   if (
-    captionBase &&
+    captionService.configured &&
     job.external_job_id &&
     ["queued", "processing"].includes(job.status)
   ) {
-    const refreshed = await refreshCaptionJob(env, captionBase, job);
+    const refreshed = await refreshCaptionJob(env, captionService, job);
     job = refreshed.job || job;
     content = refreshed.content || content;
   }
 
-  return { job, content, caption_service_configured: Boolean(captionBase) };
+  return {
+    job,
+    content,
+    caption_service_configured: captionService.configured,
+    caption_service_mode: captionService.kind
+  };
 }
 
 async function readCaptionJob(env, jobId) {
@@ -319,9 +362,10 @@ async function updateCaptionJob(env, jobId, update) {
   ).run();
 }
 
-async function refreshCaptionJob(env, captionBase, job) {
+async function refreshCaptionJob(env, captionService, job) {
   const remote = await callCaptionService(
-    captionBase,
+    env,
+    captionService,
     `/jobs/${encodeURIComponent(job.external_job_id)}`,
     null,
     "GET"
@@ -335,7 +379,7 @@ async function refreshCaptionJob(env, captionBase, job) {
 
   if (typeof remote.srt === "string" && remote.srt.trim()) {
     const parsed = parseStrictSrt(remote.srt);
-    if (!parsed.ok) throw httpError(502, "VideoCaptioner returned invalid SRT", parsed.errors);
+    if (!parsed.ok) throw httpError(502, "Caption container returned invalid SRT", parsed.errors);
 
     if (job.content_id) {
       content = await getContent(env, job.content_id).catch(() => null);
@@ -358,24 +402,30 @@ async function refreshCaptionJob(env, captionBase, job) {
   }
 
   if (update.status === "failed") {
-    update.error = remote.error || remote.message || "VideoCaptioner service failed";
+    update.error = remote.error || remote.message || "Caption container service failed";
   }
 
   await updateCaptionJob(env, job.id, update);
   return { job: await readCaptionJob(env, job.id), content };
 }
 
-async function callCaptionService(base, path, body, method = "POST") {
+async function callCaptionService(env, service, path, body, method = "POST") {
   const init = {
     method,
     headers: { "content-type": "application/json" }
   };
   if (body) init.body = JSON.stringify(body);
 
-  const response = await fetch(`${base}${path}`, init);
+  let response;
+  if (service.kind === "container") {
+    const container = getContainer(env.CAPTION_CONTAINER, CAPTION_CONTAINER_NAME);
+    response = await container.fetch(new Request(`https://caption-container.internal${path}`, init));
+  } else {
+    response = await fetch(`${service.base}${path}`, init);
+  }
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw httpError(502, data.error || data.message || "VideoCaptioner service failed");
+    throw httpError(502, data.error || data.message || "Caption container service failed");
   }
   return data;
 }
@@ -750,6 +800,19 @@ function parseSource(sourceUrl) {
 
 function getCaptionBase(env) {
   return String(env.VIDEOCAPTIONER_API_BASE || "").replace(/\/+$/, "");
+}
+
+function getCaptionService(env) {
+  if (env.CAPTION_CONTAINER && env.GROQ_API_KEY) {
+    return { kind: "container", configured: true };
+  }
+
+  const base = getCaptionBase(env);
+  if (base) {
+    return { kind: "external", configured: true, base };
+  }
+
+  return { kind: "none", configured: false };
 }
 
 function cleanText(value, maxLength) {

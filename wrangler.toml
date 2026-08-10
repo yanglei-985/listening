@@ -4,9 +4,34 @@ compatibility_date = "2024-11-18"
 
 [vars]
 VIDEOCAPTIONER_API_BASE = ""
+GROQ_API_BASE = "https://api.groq.com/openai/v1"
+GROQ_WHISPER_MODEL = "whisper-large-v3-turbo"
+GROQ_MAX_UPLOAD_BYTES = "25000000"
+CAPTION_CHUNK_SECONDS = "600"
+CAPTION_AUDIO_BITRATE = "64k"
+CAPTION_AUDIO_SAMPLE_RATE = "16000"
+
+[secrets]
+required = ["GROQ_API_KEY"]
 
 [[d1_databases]]
 binding = "DB"
 database_name = "listening"
 database_id = "e173bcc4-2b41-4e94-8587-89d4db1a8114"
 migrations_dir = "migrations"
+
+[[durable_objects.bindings]]
+name = "CAPTION_CONTAINER"
+class_name = "CaptionContainer"
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["CaptionContainer"]
+
+[[containers]]
+name = "listening-caption"
+class_name = "CaptionContainer"
+image = "./caption-service/Dockerfile"
+image_build_context = "./caption-service"
+max_instances = 1
+instance_type = "standard-1"

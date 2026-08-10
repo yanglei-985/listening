@@ -1,22 +1,36 @@
 # Listening 卡点系统
 
-这是一个听力 MVP：前端部署在 GitHub Pages，API 部署在 Cloudflare Worker，学习数据写入 D1 数据库 `listening`。
+这是一个听力 MVP：前端部署在 GitHub Pages，API 部署在 Cloudflare Worker，学习数据写入 Cloudflare D1 数据库 `listening`。
 
-## 当前链路
+当前目标不是再做播放器，而是记录“学生具体哪一句没听懂”，让老师后台直接看到红句、黄句、当前位置和反复卡住的内容。
+
+## 架构
 
 - `docs/`：GitHub Pages 静态前端
 - `worker/src/index.js`：Cloudflare Worker API
-- `migrations/0001_init.sql`：D1 schema 和 demo 内容
-- `wrangler.toml`：Worker 与 D1 绑定配置
+- `caption-service/`：Cloudflare Containers 里的字幕处理容器
+- `migrations/0001_init.sql`：D1 schema 和 demo 数据
+- `wrangler.toml`：Worker、D1、Durable Object、Container 绑定配置
 
-## 本地命令
+字幕生成链路：
 
-```powershell
-npm install
-npx wrangler d1 migrations apply listening --local
-npx wrangler dev --local
-npx http-server docs -p 4173
-```
+1. 前端提交 YouTube / B 站 / TED-Ed 等视频 URL。
+2. Worker 创建字幕任务，调用 Cloudflare Container。
+3. Container 运行 `yt-dlp` 下载媒体文件。
+4. Container 运行 `ffmpeg` 抽取压缩音频文件。
+5. Container 把音频文件上传到 Groq OpenAI-compatible `/audio/transcriptions`。
+6. Container 将 Groq segment timestamps 转成严格 SRT。
+7. Worker 再次严格校验 SRT，通过后写入 D1 的 `contents` 和 `sentences`。
+8. 前端按句播放，并支持单句遮蔽、红黄绿标记、老师后台查看。
+
+注意：普通 Cloudflare Worker 不能运行 `yt-dlp` / `ffmpeg` / Python 长任务，所以字幕服务必须放在 Cloudflare Containers 这类容器环境里。
+
+## Demo 账号
+
+- Teacher access code: `teacher-demo`
+- Student access code: `student-demo`
+
+学生播放位置写入 `listening_presence`。老师后台读取每个学生当前听到的句子，以及红/黄卡点。
 
 ## API
 
@@ -25,6 +39,7 @@ npx http-server docs -p 4173
 - `GET /api/teacher/dashboard?teacher_id=...&content_id=...`
 - `POST /api/heard`
 - `POST /api/caption-jobs`
+- `GET /api/caption-jobs/:id`
 - `GET /api/contents`
 - `POST /api/contents`
 - `GET /api/contents/:id`
@@ -34,67 +49,48 @@ npx http-server docs -p 4173
 
 ## 红黄绿规则
 
-- 第一遍懂：绿
-- 不确定或没听懂：红
-- 红句复听懂：黄
+- 第一遍听懂：绿
+- 不确定 / 没听懂：红
+- 红句复听后听懂：黄
 - 黄句再次听懂：绿
 
-## Demo accounts
+## 本地检查
 
-- Teacher access code: `teacher-demo`
-- Student access code: `student-demo`
+```powershell
+npm install
+node --check worker/src/index.js
+node --check docs/app.js
+python -m compileall caption-service
+npx wrangler deploy --dry-run --containers-rollout=none
+```
 
-Student playback position is stored in `listening_presence`. Teacher dashboard reads each student's current sentence and red/yellow checkpoints.
+## Cloudflare 部署前提
 
-## VideoCaptioner
+Cloudflare Containers 需要：
 
-Cloudflare Worker does not run VideoCaptioner directly. It calls the HTTP adapter in `caption-service/` through `VIDEOCAPTIONER_API_BASE`.
+1. Cloudflare Workers Paid plan / Containers 访问权限。
+2. 本机构建镜像时需要 Docker 或 Podman。
+3. Worker Secret 中配置 `GROQ_API_KEY`，不要写入仓库、前端或日志。
 
-Groq settings for the caption service:
+Container 运行时变量：
 
+- `GROQ_API_KEY`：必须作为 Worker Secret 设置。
 - `GROQ_API_BASE=https://api.groq.com/openai/v1`
 - `GROQ_WHISPER_MODEL=whisper-large-v3-turbo`
-- `GROQ_API_KEY` is a server-side secret and must not be exposed to Pages or Worker logs.
+- `GROQ_MAX_UPLOAD_BYTES=25000000`
+- `CAPTION_CHUNK_SECONDS=600`
+- `CAPTION_AUDIO_BITRATE=64k`
+- `CAPTION_AUDIO_SAMPLE_RATE=16000`
 
-Expected service shape:
-
-```http
-POST /jobs
-Content-Type: application/json
-
-{
-  "title": "...",
-  "source_url": "https://...",
-  "output": "srt",
-  "language": "en"
-}
-```
-
-The response can either return `{"status":"processing","job_id":"..."}` or return `{"srt":"..."}` directly.
-
-When the response is asynchronous, the Worker polls:
-
-```http
-GET /jobs/{job_id}
-```
-
-If the adapter returns SRT, the Worker strictly validates it before saving it to D1. The frontend also polls `/api/caption-jobs/:id` until the content is imported.
-
-Run the adapter locally:
+部署：
 
 ```powershell
-cd caption-service
-python -m venv .venv
-.\\.venv\\Scripts\\Activate.ps1
-pip install -r requirements.txt
-$env:GROQ_API_KEY = "<your-groq-key>"
-$env:GROQ_API_BASE = "https://api.groq.com/openai/v1"
-$env:GROQ_WHISPER_MODEL = "whisper-large-v3-turbo"
-uvicorn app:app --host 0.0.0.0 --port 8080
+npx wrangler secret put GROQ_API_KEY
+npx wrangler deploy --containers-rollout=immediate
 ```
 
-Deploy it on a server, then set the Worker variable:
+前端仍然走当前 GitHub Pages：
 
-```powershell
-npx wrangler deploy --var VIDEOCAPTIONER_API_BASE:https://your-caption-service.example.com
+```text
+https://yanglei-985.github.io/listening/
 ```
