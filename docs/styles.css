@@ -230,6 +230,8 @@ select {
   padding: 10px;
   margin: 0;
   overflow: auto;
+  scroll-behavior: smooth;
+  scroll-padding-block: 24px;
 }
 
 .sentence {
@@ -244,6 +246,7 @@ select {
   border-left-width: 5px;
   border-radius: 8px;
   background: #fff;
+  scroll-margin-block: 24px;
 }
 
 .sentence.active {
@@ -315,8 +318,13 @@ select {
 .player-panel {
   display: flex;
   flex-direction: column;
+  align-items: center;
   padding: 14px;
   gap: 14px;
+}
+
+.player-panel > * {
+  width: min(100%, 900px);
 }
 
 .media-mount {
@@ -378,6 +386,18 @@ select {
   flex-wrap: wrap;
   align-items: center;
   gap: 10px;
+}
+
+.transport-bar {
+  justify-content: center;
+}
+
+.shortcut-hint {
+  margin: -4px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+  text-align: center;
 }
 
 .mark-bar {

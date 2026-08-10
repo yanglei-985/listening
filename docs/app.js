@@ -122,9 +122,14 @@ function bindEvents() {
 
   window.addEventListener("keydown", (event) => {
     if (["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement.tagName)) return;
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
     if (event.key === "ArrowLeft") previousSentence();
     if (event.key === "ArrowDown") playCurrentSentence(true);
     if (event.key === "ArrowRight") nextSentence();
+    if (event.key.toLowerCase() === "s") {
+      event.preventDefault();
+      toggleCurrentSentence();
+    }
     if (event.key === " ") {
       event.preventDefault();
       playCurrentSentence(true);
@@ -341,6 +346,7 @@ function renderSentences() {
     fragment.append(row);
   });
   els.sentenceList.replaceChildren(fragment);
+  scrollActiveSentenceIntoView();
 }
 
 function renderCurrentSentence() {
@@ -839,6 +845,14 @@ function countStatuses() {
     if (status) counts[status] += 1;
     return counts;
   }, { green: 0, yellow: 0, red: 0 });
+}
+
+function scrollActiveSentenceIntoView() {
+  const active = els.sentenceList.querySelector(".sentence.active");
+  if (!active) return;
+  window.requestAnimationFrame(() => {
+    active.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" });
+  });
 }
 
 function currentSentence() {
