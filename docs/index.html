@@ -21,7 +21,7 @@
         <div class="top-actions">
           <select id="contentSelect" aria-label="选择内容"></select>
           <button id="openImport" class="command" type="button">导入</button>
-          <button id="teacherToggle" class="icon-command" type="button" title="老师视图" aria-label="老师视图">◎</button>
+          <button id="teacherToggle" class="command" type="button" title="老师学习库 / 学生学习台">老师库</button>
           <div class="account-box">
             <input id="accessCode" autocomplete="off" placeholder="访问码">
             <button id="loginBtn" class="command" type="button">进入</button>
@@ -30,7 +30,7 @@
         </div>
       </header>
 
-      <main class="study-grid">
+      <main id="studyGrid" class="study-grid">
         <section class="transcript-panel" aria-label="逐句稿">
           <div class="queue-strip">
             <button class="status-chip chip-green" id="greenCount" type="button">0</button>
@@ -86,12 +86,33 @@
             <div id="reviewList" class="review-list"></div>
           </section>
 
-          <section id="teacherSection" class="teacher-section" hidden>
-            <h2>老师后台</h2>
-            <div id="teacherList" class="teacher-list"></div>
-          </section>
         </aside>
       </main>
+
+      <section id="teacherWorkspace" class="teacher-workspace" hidden>
+        <div class="teacher-hero">
+          <div>
+            <p class="eyebrow">老师学习库</p>
+            <h2>老师管理材料，学生留下学习证据</h2>
+            <p>这里不做学生听力训练，只放课程材料、字幕质量和学生红黄句后台。</p>
+          </div>
+          <button id="teacherImport" class="command primary" type="button">导入老师材料</button>
+        </div>
+
+        <div class="teacher-grid">
+          <section class="teacher-card">
+            <h2>内容库</h2>
+            <p>老师侧只管理材料来源、句数和字幕状态；学生进度不混在这里。</p>
+            <div id="teacherLibraryList" class="teacher-library-list"></div>
+          </section>
+
+          <section id="teacherSection" class="teacher-card teacher-section">
+            <h2>学生学习证据</h2>
+            <p>只看学生听到哪一句、红黄句和复听证据，不把老师自己的学习记录算进去。</p>
+            <div id="teacherList" class="teacher-list"></div>
+          </section>
+        </div>
+      </section>
     </div>
 
     <dialog id="importDialog" class="import-dialog">

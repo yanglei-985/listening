@@ -21,6 +21,10 @@ const els = {
   contentSelect: document.querySelector("#contentSelect"),
   openImport: document.querySelector("#openImport"),
   teacherToggle: document.querySelector("#teacherToggle"),
+  studyGrid: document.querySelector("#studyGrid"),
+  teacherWorkspace: document.querySelector("#teacherWorkspace"),
+  teacherImport: document.querySelector("#teacherImport"),
+  teacherLibraryList: document.querySelector("#teacherLibraryList"),
   accessCode: document.querySelector("#accessCode"),
   loginBtn: document.querySelector("#loginBtn"),
   accountBadge: document.querySelector("#accountBadge"),
@@ -80,6 +84,7 @@ const state = {
 };
 
 state.learnerId = state.account?.user?.id || getLocalLearnerId();
+if (isTeacherAccount()) state.teacherVisible = true;
 
 init();
 
@@ -95,11 +100,12 @@ function init() {
 function bindEvents() {
   els.contentSelect.addEventListener("change", () => loadContent(els.contentSelect.value));
   els.openImport.addEventListener("click", () => els.importDialog.showModal());
+  els.teacherImport.addEventListener("click", () => els.importDialog.showModal());
   els.closeImport.addEventListener("click", () => els.importDialog.close());
   els.teacherToggle.addEventListener("click", async () => {
     state.teacherVisible = !state.teacherVisible;
     if (state.teacherVisible) await loadTeacherDashboard();
-    renderInsights();
+    render();
   });
   els.loginBtn.addEventListener("click", login);
   els.accessCode.addEventListener("keydown", (event) => {
@@ -152,10 +158,12 @@ async function login() {
     saveJson("listening.account", account);
     els.accessCode.value = "";
     setSyncStatus(`${account.user.display_name} 已进入`);
-    await syncProgress();
     if (account.user.role === "teacher") {
       state.teacherVisible = true;
       await loadTeacherDashboard();
+    } else {
+      state.teacherVisible = false;
+      await syncProgress();
     }
     render();
   } catch (error) {
@@ -203,7 +211,7 @@ async function loadContent(contentId) {
     state.content = normalizeContent({ ...data.content, sentences: data.sentences });
     state.currentIndex = 0;
     state.currentSentenceVisible = false;
-    await syncProgress();
+    if (!isTeacherAccount()) await syncProgress();
     if (state.teacherVisible) await loadTeacherDashboard();
     render();
   } catch (error) {
@@ -212,6 +220,7 @@ async function loadContent(contentId) {
 }
 
 async function syncProgress() {
+  if (isTeacherAccount()) return;
   if (!API_BASE || !state.content?.id || !state.learnerId) return;
   try {
     const data = await api(`/api/progress?learner_id=${encodeURIComponent(state.learnerId)}&content_id=${encodeURIComponent(state.content.id)}`);
@@ -250,11 +259,17 @@ async function loadTeacherDashboard() {
 }
 
 function render() {
+  const teacherMode = isTeacherWorkspaceActive();
   renderAccount();
   renderContentSelect();
-  renderMedia();
-  renderSentences();
-  renderCurrentSentence();
+  renderModeShell(teacherMode);
+  if (teacherMode) {
+    renderTeacherLibrary();
+  } else {
+    renderMedia();
+    renderSentences();
+    renderCurrentSentence();
+  }
   renderInsights();
   els.body.classList.toggle("show-all-subtitles", state.allSubtitlesVisible);
   els.body.classList.toggle("show-current-subtitle", state.currentSentenceVisible);
@@ -262,14 +277,28 @@ function render() {
   els.toggleSubtitles.textContent = state.allSubtitlesVisible ? "遮蔽全部" : "显示全部";
 }
 
+function renderModeShell(teacherMode) {
+  els.body.classList.toggle("teacher-mode", teacherMode);
+  els.studyGrid.hidden = teacherMode;
+  els.teacherWorkspace.hidden = !teacherMode;
+  els.contentSelect.hidden = teacherMode;
+}
+
 function renderAccount() {
   if (!state.account?.user) {
     els.accountBadge.textContent = "未登录";
     els.teacherToggle.disabled = true;
+    els.teacherToggle.textContent = "老师库";
+    els.openImport.hidden = false;
+    els.openImport.textContent = "导入";
     return;
   }
-  els.accountBadge.textContent = `${state.account.user.display_name} · ${state.account.user.role === "teacher" ? "老师" : "学生"}`;
-  els.teacherToggle.disabled = state.account.user.role !== "teacher";
+  const isTeacher = isTeacherAccount();
+  els.accountBadge.textContent = `${state.account.user.display_name} · ${isTeacher ? "老师" : "学生"}`;
+  els.teacherToggle.disabled = !isTeacher;
+  els.teacherToggle.textContent = isTeacherWorkspaceActive() ? "学生学习台" : "老师库";
+  els.openImport.hidden = state.account.user.role === "student";
+  els.openImport.textContent = isTeacher ? "导入老师材料" : "导入";
 }
 
 function renderContentSelect() {
@@ -373,9 +402,38 @@ function renderInsights() {
   els.reviewList.replaceChildren(...reviewItems.map(renderReviewItem));
   if (!reviewItems.length) els.reviewList.innerHTML = '<div class="empty">暂无红黄句</div>';
 
-  els.teacherSection.hidden = !state.teacherVisible;
-  els.teacherToggle.classList.toggle("primary", state.teacherVisible);
-  if (state.teacherVisible) renderTeacherView();
+  const teacherMode = isTeacherWorkspaceActive();
+  els.teacherSection.hidden = !teacherMode;
+  els.teacherToggle.classList.toggle("primary", teacherMode);
+  if (teacherMode) renderTeacherView();
+}
+
+function renderTeacherLibrary() {
+  if (!els.teacherLibraryList) return;
+  const contents = state.contents.length ? state.contents : [state.content];
+  if (!contents.length) {
+    els.teacherLibraryList.innerHTML = '<div class="empty">暂无老师材料，先导入一个视频和严格 SRT。</div>';
+    return;
+  }
+
+  els.teacherLibraryList.replaceChildren(...contents.map((content) => {
+    const node = document.createElement("div");
+    const isActive = content.id === state.content?.id;
+    node.className = `teacher-library-item ${isActive ? "active" : ""}`;
+    node.innerHTML = `
+      <div>
+        <strong>${escapeHtml(content.title)}</strong>
+        <p>${content.sentence_count || content.sentences?.length || 0} 句 · ${escapeHtml(content.source_type || "video")} · ${escapeHtml(content.caption_status || "ready")}</p>
+      </div>
+      <button class="command ghost" type="button">${isActive ? "当前后台" : "查看后台"}</button>
+    `;
+    node.querySelector("button").addEventListener("click", async () => {
+      await loadContent(content.id);
+      if (isTeacherWorkspaceActive()) await loadTeacherDashboard();
+      render();
+    });
+    return node;
+  }));
 }
 
 function renderReviewItem(item) {
@@ -491,7 +549,7 @@ function playCurrentSentence(isReplay) {
 }
 
 async function recordHeard(sentence) {
-  if (!API_BASE || !state.account?.user || state.content.id.startsWith("local_")) return;
+  if (!API_BASE || !isStudentAccount() || state.content.id.startsWith("local_")) return;
   try {
     await api("/api/heard", {
       method: "POST",
@@ -508,6 +566,10 @@ async function recordHeard(sentence) {
 }
 
 async function markCurrent(result) {
+  if (isTeacherAccount()) {
+    setSyncStatus("老师账号不写入学生学习记录，请用学生访问码学习");
+    return;
+  }
   const sentence = currentSentence();
   const current = state.progress[sentence.id] || {};
   const previousStatus = current.status || "new";
@@ -531,7 +593,7 @@ async function markCurrent(result) {
   saveJson("listening.playbackCounts", state.playbackCounts);
   render();
 
-  if (API_BASE && !state.content.id.startsWith("local_")) {
+  if (API_BASE && !state.content.id.startsWith("local_") && isStudentAccount()) {
     try {
       await api("/api/attempts", {
         method: "POST",
@@ -845,6 +907,18 @@ function countStatuses() {
     if (status) counts[status] += 1;
     return counts;
   }, { green: 0, yellow: 0, red: 0 });
+}
+
+function isTeacherAccount() {
+  return state.account?.user?.role === "teacher";
+}
+
+function isStudentAccount() {
+  return !state.account?.user || state.account.user.role === "student";
+}
+
+function isTeacherWorkspaceActive() {
+  return isTeacherAccount() && state.teacherVisible;
 }
 
 function scrollActiveSentenceIntoView() {

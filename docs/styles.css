@@ -16,11 +16,21 @@
   box-sizing: border-box;
 }
 
+html,
+body {
+  height: 100%;
+}
+
 body {
   margin: 0;
   background: var(--bg);
   color: var(--ink);
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  overflow: hidden;
+}
+
+[hidden] {
+  display: none !important;
 }
 
 button,
@@ -35,16 +45,22 @@ button {
 }
 
 .app-shell {
-  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  min-height: 0;
+  overflow: hidden;
   padding: 18px;
 }
 
 .topbar {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 18px;
   margin: 0 auto 18px;
+  width: 100%;
   max-width: 1480px;
 }
 
@@ -174,17 +190,22 @@ select {
 }
 
 .study-grid {
+  flex: 1 1 auto;
   display: grid;
   grid-template-columns: minmax(320px, 0.95fr) minmax(460px, 1.35fr) minmax(290px, 0.8fr);
   gap: 16px;
+  min-height: 0;
+  width: 100%;
   max-width: 1480px;
   margin: 0 auto;
+  overflow: hidden;
 }
 
 .transcript-panel,
 .player-panel,
 .insight-panel {
-  min-height: calc(100vh - 96px);
+  min-height: 0;
+  height: 100%;
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -226,6 +247,8 @@ select {
 }
 
 .sentence-list {
+  flex: 1 1 auto;
+  min-height: 0;
   list-style: none;
   padding: 10px;
   margin: 0;
@@ -319,6 +342,7 @@ select {
   display: flex;
   flex-direction: column;
   align-items: center;
+  overflow: auto;
   padding: 14px;
   gap: 14px;
 }
@@ -428,6 +452,91 @@ select {
 .insight-panel {
   padding: 14px;
   overflow: auto;
+}
+
+.teacher-workspace {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  max-width: 1480px;
+  margin: 0 auto;
+  overflow: auto;
+}
+
+.teacher-hero,
+.teacher-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+}
+
+.teacher-hero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 16px;
+  padding: 18px;
+}
+
+.teacher-hero h2,
+.teacher-card h2 {
+  margin: 0;
+}
+
+.teacher-hero p,
+.teacher-card > p {
+  margin: 8px 0 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.eyebrow {
+  margin: 0 0 6px !important;
+  color: var(--blue) !important;
+  font-size: 13px;
+  font-weight: 850;
+}
+
+.teacher-grid {
+  display: grid;
+  grid-template-columns: minmax(360px, 0.9fr) minmax(520px, 1.1fr);
+  gap: 16px;
+}
+
+.teacher-card {
+  padding: 16px;
+}
+
+.teacher-library-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.teacher-library-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-left: 5px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: #fff;
+}
+
+.teacher-library-item.active {
+  border-color: var(--blue);
+  border-left-color: var(--blue);
+  background: #f5f8ff;
+}
+
+.teacher-library-item p {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 13px;
 }
 
 .metric-band {
@@ -619,16 +728,29 @@ textarea {
 @media (max-width: 1180px) {
   .study-grid {
     grid-template-columns: minmax(280px, 0.85fr) minmax(420px, 1.15fr);
+    grid-template-rows: minmax(0, 1fr) minmax(180px, 0.35fr);
   }
 
   .insight-panel {
     grid-column: 1 / -1;
-    min-height: auto;
+    min-height: 0;
+    height: 100%;
+  }
+
+  .teacher-grid {
+    grid-template-columns: 1fr;
   }
 }
 
 @media (max-width: 780px) {
+  body {
+    overflow: auto;
+  }
+
   .app-shell {
+    height: auto;
+    min-height: 100vh;
+    overflow: visible;
     padding: 10px;
   }
 
@@ -653,12 +775,29 @@ textarea {
 
   .study-grid {
     grid-template-columns: 1fr;
+    grid-template-rows: none;
+    overflow: visible;
   }
 
   .transcript-panel,
   .player-panel,
   .insight-panel {
+    height: auto;
     min-height: auto;
+  }
+
+  .sentence-list {
+    max-height: 46vh;
+  }
+
+  .teacher-workspace {
+    overflow: visible;
+  }
+
+  .teacher-hero,
+  .teacher-library-item {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .current-sentence {
