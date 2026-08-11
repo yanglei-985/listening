@@ -590,13 +590,66 @@ function renderAnnotationCard(annotation, options = {}) {
     </div>
     <strong>${escapeHtml(annotation.summary)}</strong>
     ${annotation.detail ? `<p>${escapeHtml(annotation.detail)}</p>` : ""}
-    ${annotation.example ? `<p class="annotation-example">${escapeHtml(annotation.example)}</p>` : ""}
+    ${renderAnnotationExample(annotation)}
     ${meta.referenceUrl ? `<a class="annotation-reference" href="${escapeHtml(meta.referenceUrl)}" target="_blank" rel="noreferrer">${escapeHtml(meta.referenceTitle)}</a>` : `<span class="annotation-reference">${escapeHtml(meta.referenceTitle)}</span>`}
   `;
   if (options.editable) {
     node.querySelector("button").addEventListener("click", () => deleteTeacherAnnotation(annotation.id));
   }
   return node;
+}
+
+function renderAnnotationExample(annotation) {
+  const example = String(annotation.example || "").trim();
+  if (!example) return "";
+  if (/^MINDMAP\b/i.test(example)) return renderMindMap(example);
+  return `<p class="annotation-example">${escapeHtml(example)}</p>`;
+}
+
+function renderMindMap(raw) {
+  const lines = String(raw || "")
+    .replace(/^MINDMAP\s*:?\s*/i, "")
+    .split("\n")
+    .map((line) => line.replace(/\s+$/, ""))
+    .filter((line) => line.trim());
+  if (!lines.length) return "";
+
+  const root = lines.shift().replace(/^\s*-\s*/, "").trim();
+  const items = parseMindMapItems(lines);
+  return `
+    <div class="mindmap-card" role="img" aria-label="${escapeHtml(root)}">
+      <div class="mindmap-root">${escapeHtml(root)}</div>
+      ${items.length ? `<ul class="mindmap-branches">${renderMindMapItems(items)}</ul>` : ""}
+    </div>
+  `;
+}
+
+function parseMindMapItems(lines) {
+  const root = [];
+  const stack = [{ level: -1, children: root }];
+
+  lines.forEach((line) => {
+    const indent = line.match(/^\s*/)[0].length;
+    const level = Math.floor(indent / 2);
+    const text = line.replace(/^\s*-\s*/, "").trim();
+    if (!text) return;
+
+    const item = { text, children: [] };
+    while (stack.length > 1 && stack[stack.length - 1].level >= level) stack.pop();
+    stack[stack.length - 1].children.push(item);
+    stack.push({ level, children: item.children });
+  });
+
+  return root;
+}
+
+function renderMindMapItems(items) {
+  return items.map((item) => `
+    <li>
+      <span>${escapeHtml(item.text)}</span>
+      ${item.children.length ? `<ul>${renderMindMapItems(item.children)}</ul>` : ""}
+    </li>
+  `).join("");
 }
 
 function renderReviewItem(item) {
