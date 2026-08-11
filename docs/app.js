@@ -236,6 +236,7 @@ async function login() {
     } else {
       state.teacherVisible = false;
       await syncProgress();
+      await restoreLastPosition();
     }
     render();
   } catch (error) {
@@ -247,6 +248,8 @@ async function loadContents() {
   if (!API_BASE) {
     state.contents = [state.content];
     renderContentSelect();
+    restoreLocalPosition();
+    render();
     return;
   }
 
@@ -263,6 +266,8 @@ async function loadContents() {
     setSyncStatus(`Offline fallback · ${error.message}`);
     state.contents = [state.content];
     renderContentSelect();
+    restoreLocalPosition();
+    render();
   }
 }
 
@@ -274,6 +279,7 @@ async function loadContent(contentId) {
     state.content = normalizeContent(local || DEMO_CONTENT);
     state.currentIndex = 0;
     state.currentSentenceVisible = false;
+    restoreLocalPosition();
     render();
     return;
   }
@@ -283,6 +289,7 @@ async function loadContent(contentId) {
     state.content = normalizeContent({ ...data.content, sentences: data.sentences, annotations: data.annotations });
     state.currentIndex = 0;
     state.currentSentenceVisible = false;
+    await restoreLastPosition();
     if (!isTeacherAccount()) await syncProgress();
     if (state.teacherVisible) await loadTeacherDashboard();
     render();
@@ -477,7 +484,8 @@ function renderInsights() {
   if (!reviewItems.length) els.reviewList.innerHTML = '<div class="empty">暂无红黄句</div>';
 
   const teacherMode = isTeacherWorkspaceActive();
-  renderStudentAnnotationSummary(!teacherMode);
+  const sentenceRevealed = state.currentSentenceVisible || state.allSubtitlesVisible;
+  renderStudentAnnotationSummary(!teacherMode && sentenceRevealed, !teacherMode);
   els.teacherSection.hidden = !teacherMode;
   els.teacherToggle.classList.toggle("primary", teacherMode);
   if (teacherMode) renderTeacherView();
@@ -556,9 +564,14 @@ function renderTeacherAnnotationList() {
   }
 }
 
-function renderStudentAnnotationSummary(visible) {
-  els.studentAnnotationSection.hidden = !visible;
-  if (!visible) return;
+function renderStudentAnnotationSummary(visible, showSection = true) {
+  els.studentAnnotationSection.hidden = !showSection;
+  if (!visible) {
+    if (!els.studentAnnotationSection.hidden) {
+      els.studentAnnotationList.innerHTML = '<div class="empty">按 S 显示本句后查看老师批注。</div>';
+    }
+    return;
+  }
   const annotations = getAnnotationsForSentence(currentSentence().id);
   els.studentAnnotationList.replaceChildren(...annotations.map((annotation) => renderAnnotationCard(annotation, { editable: false })));
   if (!annotations.length) {
@@ -666,6 +679,7 @@ function nextSentence() {
 
 function playCurrentSentence(isReplay) {
   const sentence = currentSentence();
+  saveCurrentPosition();
   state.playbackCounts[sentence.id] = (state.playbackCounts[sentence.id] || 0) + 1;
   saveJson("listening.playbackCounts", state.playbackCounts);
   recordHeard(sentence);
@@ -721,6 +735,7 @@ async function markCurrent(result) {
     return;
   }
   const sentence = currentSentence();
+  saveCurrentPosition();
   const current = state.progress[sentence.id] || {};
   const previousStatus = current.status || "new";
   const nextStatus = transitionStatus(previousStatus, result);
@@ -781,12 +796,14 @@ function moveToNextReviewCandidate() {
 
 function toggleCurrentSentence() {
   state.currentSentenceVisible = !state.currentSentenceVisible;
+  saveCurrentPosition();
   if (state.currentSentenceVisible) noteSubtitleView(currentSentence());
   render();
 }
 
 function toggleAllSubtitles() {
   state.allSubtitlesVisible = !state.allSubtitlesVisible;
+  saveCurrentPosition();
   if (state.allSubtitlesVisible) noteSubtitleView(currentSentence());
   render();
 }
@@ -1248,6 +1265,63 @@ function setCaptionStatus(text) {
 
 function persistProgress() {
   saveJson("listening.progress", state.progress);
+}
+
+function positionStorageKey() {
+  return `${state.learnerId || "local"}:${state.content?.id || ""}`;
+}
+
+function saveCurrentPosition() {
+  if (isTeacherAccount() || !state.content?.id || !state.content.sentences.length) return;
+  const positions = loadJson("listening.lastPositions", {});
+  const sentence = currentSentence();
+  positions[positionStorageKey()] = {
+    index: state.currentIndex,
+    sentenceId: sentence.id,
+    updatedAt: new Date().toISOString()
+  };
+  saveJson("listening.lastPositions", positions);
+}
+
+function restoreLocalPosition() {
+  if (isTeacherAccount() || !state.content?.id || !state.content.sentences.length) return false;
+  const positions = loadJson("listening.lastPositions", {});
+  const saved = positions[positionStorageKey()];
+  if (!saved) return false;
+
+  const sentenceIndex = state.content.sentences.findIndex((sentence) => sentence.id === saved.sentenceId);
+  const fallbackIndex = Number.parseInt(saved.index, 10);
+  const nextIndex = sentenceIndex >= 0 ? sentenceIndex : fallbackIndex;
+  if (!Number.isInteger(nextIndex) || nextIndex < 0 || nextIndex >= state.content.sentences.length) return false;
+
+  state.currentIndex = nextIndex;
+  return true;
+}
+
+async function restoreLastPosition() {
+  const localRestored = restoreLocalPosition();
+  if (!API_BASE || !isStudentAccount() || !state.account?.user?.id || !state.content?.id || state.content.id.startsWith("local_")) {
+    return localRestored;
+  }
+
+  try {
+    const query = new URLSearchParams({
+      student_id: state.account.user.id,
+      content_id: state.content.id
+    });
+    const data = await api(`/api/heard?${query}`);
+    const sentenceId = data.presence?.sentence_id;
+    const remoteIndex = state.content.sentences.findIndex((sentence) => sentence.id === sentenceId);
+    if (remoteIndex >= 0) {
+      state.currentIndex = remoteIndex;
+      saveCurrentPosition();
+      return true;
+    }
+  } catch (error) {
+    if (!localRestored) setSyncStatus(`断点记忆仅本地 · ${error.message}`);
+  }
+
+  return localRestored;
 }
 
 function getLocalLearnerId() {

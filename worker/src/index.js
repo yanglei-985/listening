@@ -58,6 +58,7 @@ export default {
       if (path === "/health") return json(await health(env));
       if (path === "/api/accounts/login" && request.method === "POST") return json(await login(request, env));
       if (path === "/api/teacher/dashboard" && request.method === "GET") return json(await teacherDashboard(env, url.searchParams));
+      if (path === "/api/heard" && request.method === "GET") return json(await getHeard(env, url.searchParams));
       if (path === "/api/heard" && request.method === "POST") return json(await recordHeard(request, env), 201);
       if (path === "/api/teacher/annotations" && request.method === "POST") return json(await createTeacherAnnotation(request, env), 201);
       if (path === "/api/caption-jobs" && request.method === "POST") return json(await createCaptionJob(request, env), 201);
@@ -618,6 +619,24 @@ async function recordHeard(request, env) {
   `).bind(studentId, contentId).first();
 
   return { presence };
+}
+
+async function getHeard(env, params) {
+  const studentId = cleanText(params.get("student_id") || params.get("studentId") || params.get("user_id") || params.get("userId") || "", 120);
+  const contentId = cleanText(params.get("content_id") || params.get("contentId") || "", 120);
+
+  if (!studentId || !contentId) {
+    throw httpError(400, "student_id and content_id are required");
+  }
+
+  const presence = await env.DB.prepare(`
+    SELECT lp.*, s.position, s.text
+    FROM listening_presence lp
+    JOIN sentences s ON s.id = lp.sentence_id
+    WHERE lp.student_id = ? AND lp.content_id = ?
+  `).bind(studentId, contentId).first();
+
+  return { presence: presence || null };
 }
 
 async function recordAttempt(request, env) {
