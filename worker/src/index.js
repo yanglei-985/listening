@@ -3,11 +3,22 @@ import { Container, getContainer } from "@cloudflare/containers";
 const JSON_HEADERS = {
   "content-type": "application/json; charset=utf-8",
   "access-control-allow-origin": "*",
-  "access-control-allow-methods": "GET,POST,OPTIONS",
+  "access-control-allow-methods": "GET,POST,DELETE,OPTIONS",
   "access-control-allow-headers": "content-type"
 };
 
 const CAPTION_CONTAINER_NAME = "listening-caption";
+const ALLOWED_ANNOTATION_LABELS = new Set([
+  "linking",
+  "intrusion",
+  "elision",
+  "assimilation",
+  "weak_form",
+  "stress",
+  "intonation",
+  "phoneme",
+  "other"
+]);
 
 export class CaptionContainer extends Container {
   defaultPort = 8080;
@@ -48,11 +59,17 @@ export default {
       if (path === "/api/accounts/login" && request.method === "POST") return json(await login(request, env));
       if (path === "/api/teacher/dashboard" && request.method === "GET") return json(await teacherDashboard(env, url.searchParams));
       if (path === "/api/heard" && request.method === "POST") return json(await recordHeard(request, env), 201);
+      if (path === "/api/teacher/annotations" && request.method === "POST") return json(await createTeacherAnnotation(request, env), 201);
       if (path === "/api/caption-jobs" && request.method === "POST") return json(await createCaptionJob(request, env), 201);
 
       const captionJobMatch = path.match(/^\/api\/caption-jobs\/([^/]+)$/);
       if (captionJobMatch && request.method === "GET") {
         return json(await getCaptionJob(env, decodeURIComponent(captionJobMatch[1])));
+      }
+
+      const annotationMatch = path.match(/^\/api\/teacher\/annotations\/([^/]+)$/);
+      if (annotationMatch && request.method === "DELETE") {
+        return json(await deleteTeacherAnnotation(env, decodeURIComponent(annotationMatch[1]), url.searchParams));
       }
 
       if (path === "/api/contents" && request.method === "GET") return json(await listContents(env));
@@ -128,10 +145,15 @@ async function listContents(env) {
       c.created_by_user_id,
       c.caption_status,
       c.caption_job_id,
-      COUNT(s.id) AS sentence_count
+      (
+        SELECT COUNT(*) FROM sentences s
+        WHERE s.content_id = c.id
+      ) AS sentence_count,
+      (
+        SELECT COUNT(*) FROM teacher_sentence_annotations a
+        WHERE a.content_id = c.id
+      ) AS annotation_count
     FROM contents c
-    LEFT JOIN sentences s ON s.content_id = c.id
-    GROUP BY c.id
     ORDER BY c.created_at DESC
   `).all();
 
@@ -149,7 +171,129 @@ async function getContent(env, contentId) {
     ORDER BY position ASC
   `).bind(contentId).all();
 
-  return { content, sentences: sentences.results || [] };
+  const annotations = await env.DB.prepare(`
+    SELECT
+      a.id,
+      a.content_id,
+      a.sentence_id,
+      a.teacher_id,
+      a.label,
+      a.summary,
+      a.detail,
+      a.example,
+      a.reference_key,
+      a.created_at,
+      a.updated_at,
+      s.position,
+      s.start_ms,
+      s.end_ms,
+      s.text AS sentence_text
+    FROM teacher_sentence_annotations a
+    JOIN sentences s ON s.id = a.sentence_id
+    WHERE a.content_id = ?
+    ORDER BY s.position ASC, a.updated_at DESC
+  `).bind(contentId).all();
+
+  return { content, sentences: sentences.results || [], annotations: annotations.results || [] };
+}
+
+async function createTeacherAnnotation(request, env) {
+  const body = await readJson(request);
+  const teacherId = cleanText(body.teacher_id || body.teacherId || "", 120);
+  const contentId = cleanText(body.content_id || body.contentId || "", 120);
+  const sentenceId = cleanText(body.sentence_id || body.sentenceId || "", 120);
+  const label = cleanText(body.label || "", 40);
+  const summary = cleanText(body.summary || "", 180);
+  const detail = cleanText(body.detail || "", 1500);
+  const example = cleanText(body.example || "", 300);
+  const referenceKey = cleanText(body.reference_key || body.referenceKey || "", 80);
+
+  if (!teacherId || !contentId || !sentenceId || !label || !summary) {
+    throw httpError(400, "teacher_id, content_id, sentence_id, label and summary are required");
+  }
+
+  if (!ALLOWED_ANNOTATION_LABELS.has(label)) {
+    throw httpError(400, "Unsupported annotation label");
+  }
+
+  const teacher = await env.DB.prepare(`
+    SELECT id, display_name, role FROM users WHERE id = ? AND role = 'teacher'
+  `).bind(teacherId).first();
+  if (!teacher) throw httpError(403, "Teacher account required");
+
+  const sentence = await env.DB.prepare(`
+    SELECT id, content_id, position, text FROM sentences WHERE id = ? AND content_id = ?
+  `).bind(sentenceId, contentId).first();
+  if (!sentence) throw httpError(404, "Sentence not found");
+
+  const annotationId = `annotation_${crypto.randomUUID()}`;
+  const now = new Date().toISOString();
+
+  await env.DB.prepare(`
+    INSERT INTO teacher_sentence_annotations (
+      id, content_id, sentence_id, teacher_id, label, summary, detail,
+      example, reference_key, created_at, updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(
+    annotationId,
+    contentId,
+    sentenceId,
+    teacherId,
+    label,
+    summary,
+    detail || null,
+    example || null,
+    referenceKey || null,
+    now,
+    now
+  ).run();
+
+  const annotation = await env.DB.prepare(`
+    SELECT
+      a.id,
+      a.content_id,
+      a.sentence_id,
+      a.teacher_id,
+      a.label,
+      a.summary,
+      a.detail,
+      a.example,
+      a.reference_key,
+      a.created_at,
+      a.updated_at,
+      s.position,
+      s.start_ms,
+      s.end_ms,
+      s.text AS sentence_text
+    FROM teacher_sentence_annotations a
+    JOIN sentences s ON s.id = a.sentence_id
+    WHERE a.id = ?
+  `).bind(annotationId).first();
+
+  return { annotation };
+}
+
+async function deleteTeacherAnnotation(env, annotationId, params) {
+  const teacherId = params.get("teacher_id") || params.get("teacherId") || params.get("user_id") || params.get("userId");
+  if (!teacherId) throw httpError(400, "teacher_id is required");
+
+  const teacher = await env.DB.prepare(`
+    SELECT id, display_name, role FROM users WHERE id = ? AND role = 'teacher'
+  `).bind(teacherId).first();
+  if (!teacher) throw httpError(403, "Teacher account required");
+
+  const annotation = await env.DB.prepare(`
+    SELECT id, teacher_id FROM teacher_sentence_annotations WHERE id = ?
+  `).bind(annotationId).first();
+  if (!annotation) throw httpError(404, "Annotation not found");
+  if (annotation.teacher_id !== teacherId) throw httpError(403, "You can only delete your own annotation");
+
+  await env.DB.prepare(`
+    DELETE FROM teacher_sentence_annotations WHERE id = ? AND teacher_id = ?
+  `).bind(annotationId, teacherId).run();
+
+  return { deleted: true, annotation_id: annotationId };
 }
 
 async function createContent(request, env) {

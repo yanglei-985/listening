@@ -539,6 +539,180 @@ select {
   font-size: 13px;
 }
 
+.teacher-annotation-card {
+  grid-column: 1 / -1;
+}
+
+.teacher-annotation-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.reference-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.reference-links a,
+.annotation-reference {
+  color: var(--blue);
+  font-size: 13px;
+  text-decoration: none;
+}
+
+.teacher-annotation-layout {
+  display: grid;
+  grid-template-columns: minmax(320px, 0.85fr) minmax(480px, 1.15fr);
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.annotation-help,
+.annotation-reference-hint {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.annotation-sentence-list {
+  display: grid;
+  gap: 8px;
+  max-height: 560px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.annotation-sentence-item {
+  display: grid;
+  grid-template-columns: 38px 1fr 48px;
+  gap: 10px;
+  align-items: start;
+  width: 100%;
+  border: 1px solid var(--line);
+  border-left: 5px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  background: #fff;
+  text-align: left;
+}
+
+.annotation-sentence-item.active {
+  border-color: var(--blue);
+  border-left-color: var(--blue);
+  background: #f5f8ff;
+}
+
+.annotation-sentence-item span {
+  color: var(--muted);
+  font-weight: 850;
+}
+
+.annotation-sentence-item p {
+  margin: 0;
+  line-height: 1.45;
+}
+
+.annotation-sentence-item em {
+  color: var(--muted);
+  font-size: 12px;
+  font-style: normal;
+  text-align: right;
+}
+
+.annotation-editor {
+  display: grid;
+  gap: 14px;
+}
+
+.annotation-current {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px;
+  background: #fbfcfd;
+}
+
+.annotation-current div {
+  display: flex;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.annotation-current p {
+  margin: 10px 0 0;
+  line-height: 1.5;
+}
+
+.annotation-form {
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px;
+  background: #fff;
+}
+
+.annotation-list {
+  display: grid;
+  gap: 10px;
+}
+
+.annotation-card {
+  border: 1px solid var(--line);
+  border-left: 5px solid var(--blue);
+  border-radius: 8px;
+  padding: 12px;
+  background: #fff;
+}
+
+.annotation-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.annotation-tag {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  border-radius: 999px;
+  padding: 0 10px;
+  background: #eef4ff;
+  color: var(--blue);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.annotation-card strong {
+  display: block;
+  line-height: 1.4;
+}
+
+.annotation-card p {
+  margin: 8px 0 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.annotation-example {
+  color: var(--ink) !important;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+}
+
+.link-button {
+  all: unset;
+  cursor: pointer;
+  color: var(--red);
+  font-size: 13px;
+  font-weight: 800;
+}
+
 .metric-band {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
@@ -740,6 +914,10 @@ textarea {
   .teacher-grid {
     grid-template-columns: 1fr;
   }
+
+  .teacher-annotation-layout {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 780px) {
@@ -795,9 +973,14 @@ textarea {
   }
 
   .teacher-hero,
+  .teacher-annotation-head,
   .teacher-library-item {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .annotation-sentence-list {
+    max-height: 46vh;
   }
 
   .current-sentence {

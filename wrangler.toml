@@ -13,9 +13,6 @@ CAPTION_AUDIO_SAMPLE_RATE = "16000"
 YTDLP_JS_RUNTIMES = "node"
 YTDLP_REMOTE_COMPONENTS = "ejs:github"
 
-[secrets]
-required = ["GROQ_API_KEY"]
-
 [[d1_databases]]
 binding = "DB"
 database_name = "listening"

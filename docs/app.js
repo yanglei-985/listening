@@ -15,6 +15,63 @@ const DEMO_CONTENT = {
   ]
 };
 
+const ANNOTATION_TYPES = {
+  linking: {
+    title: "连读 / Linking",
+    referenceKey: "british_council_connected_speech",
+    referenceTitle: "British Council · connected speech",
+    referenceUrl: "https://www.teachingenglish.org.uk/professional-development/teachers/knowing-subject/c/connected-speech"
+  },
+  intrusion: {
+    title: "插音 / Intrusion",
+    referenceKey: "british_council_connected_speech",
+    referenceTitle: "British Council · connected speech",
+    referenceUrl: "https://www.teachingenglish.org.uk/professional-development/teachers/knowing-subject/c/connected-speech"
+  },
+  elision: {
+    title: "省音 / Elision",
+    referenceKey: "british_council_connected_speech",
+    referenceTitle: "British Council · connected speech",
+    referenceUrl: "https://www.teachingenglish.org.uk/professional-development/teachers/knowing-subject/c/connected-speech"
+  },
+  assimilation: {
+    title: "同化 / Assimilation",
+    referenceKey: "british_council_connected_speech",
+    referenceTitle: "British Council · connected speech",
+    referenceUrl: "https://www.teachingenglish.org.uk/professional-development/teachers/knowing-subject/c/connected-speech"
+  },
+  weak_form: {
+    title: "弱读 / Weak form",
+    referenceKey: "oxford_pronunciation_guide",
+    referenceTitle: "Oxford Learner's Dictionaries · pronunciation guide",
+    referenceUrl: "https://www.oxfordlearnersdictionaries.com/about/english/pronunciation_english"
+  },
+  stress: {
+    title: "重音 / Stress",
+    referenceKey: "oxford_pronunciation_guide",
+    referenceTitle: "Oxford Learner's Dictionaries · pronunciation guide",
+    referenceUrl: "https://www.oxfordlearnersdictionaries.com/about/english/pronunciation_english"
+  },
+  intonation: {
+    title: "语调 / Intonation",
+    referenceKey: "british_council_intonation",
+    referenceTitle: "British Council · intonation",
+    referenceUrl: "https://www.britishcouncil.org/voices-magazine/how-english-learners-can-improve-intonation"
+  },
+  phoneme: {
+    title: "单音辨认 / Phoneme",
+    referenceKey: "oxford_pronunciation_guide",
+    referenceTitle: "Oxford Learner's Dictionaries · pronunciation guide",
+    referenceUrl: "https://www.oxfordlearnersdictionaries.com/about/english/pronunciation_english"
+  },
+  other: {
+    title: "其他 / Other",
+    referenceKey: "teacher_observation",
+    referenceTitle: "老师课堂观察",
+    referenceUrl: ""
+  }
+};
+
 const els = {
   body: document.body,
   syncStatus: document.querySelector("#syncStatus"),
@@ -25,6 +82,17 @@ const els = {
   teacherWorkspace: document.querySelector("#teacherWorkspace"),
   teacherImport: document.querySelector("#teacherImport"),
   teacherLibraryList: document.querySelector("#teacherLibraryList"),
+  teacherSentenceList: document.querySelector("#teacherSentenceList"),
+  teacherCurrentSentenceIndex: document.querySelector("#teacherCurrentSentenceIndex"),
+  teacherCurrentSentenceTime: document.querySelector("#teacherCurrentSentenceTime"),
+  teacherCurrentSentenceText: document.querySelector("#teacherCurrentSentenceText"),
+  annotationForm: document.querySelector("#annotationForm"),
+  annotationLabel: document.querySelector("#annotationLabel"),
+  annotationSummary: document.querySelector("#annotationSummary"),
+  annotationDetail: document.querySelector("#annotationDetail"),
+  annotationExample: document.querySelector("#annotationExample"),
+  annotationReferenceHint: document.querySelector("#annotationReferenceHint"),
+  teacherAnnotationList: document.querySelector("#teacherAnnotationList"),
   accessCode: document.querySelector("#accessCode"),
   loginBtn: document.querySelector("#loginBtn"),
   accountBadge: document.querySelector("#accountBadge"),
@@ -49,6 +117,8 @@ const els = {
   accuracyRate: document.querySelector("#accuracyRate"),
   reviewSize: document.querySelector("#reviewSize"),
   reviewList: document.querySelector("#reviewList"),
+  studentAnnotationSection: document.querySelector("#studentAnnotationSection"),
+  studentAnnotationList: document.querySelector("#studentAnnotationList"),
   teacherSection: document.querySelector("#teacherSection"),
   teacherList: document.querySelector("#teacherList"),
   importDialog: document.querySelector("#importDialog"),
@@ -125,6 +195,8 @@ function bindEvents() {
   els.srtFile.addEventListener("change", readSrtFile);
   els.generateCaption.addEventListener("click", generateCaption);
   els.importForm.addEventListener("submit", handleImport);
+  els.annotationForm.addEventListener("submit", saveTeacherAnnotation);
+  els.annotationLabel.addEventListener("change", renderAnnotationReferenceHint);
 
   window.addEventListener("keydown", (event) => {
     if (["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement.tagName)) return;
@@ -208,7 +280,7 @@ async function loadContent(contentId) {
 
   try {
     const data = await api(`/api/contents/${encodeURIComponent(contentId)}`);
-    state.content = normalizeContent({ ...data.content, sentences: data.sentences });
+    state.content = normalizeContent({ ...data.content, sentences: data.sentences, annotations: data.annotations });
     state.currentIndex = 0;
     state.currentSentenceVisible = false;
     if (!isTeacherAccount()) await syncProgress();
@@ -265,6 +337,7 @@ function render() {
   renderModeShell(teacherMode);
   if (teacherMode) {
     renderTeacherLibrary();
+    renderTeacherAnnotationWorkspace();
   } else {
     renderMedia();
     renderSentences();
@@ -282,6 +355,7 @@ function renderModeShell(teacherMode) {
   els.studyGrid.hidden = teacherMode;
   els.teacherWorkspace.hidden = !teacherMode;
   els.contentSelect.hidden = teacherMode;
+  els.openImport.hidden = teacherMode || state.account?.user?.role === "student";
 }
 
 function renderAccount() {
@@ -403,6 +477,7 @@ function renderInsights() {
   if (!reviewItems.length) els.reviewList.innerHTML = '<div class="empty">暂无红黄句</div>';
 
   const teacherMode = isTeacherWorkspaceActive();
+  renderStudentAnnotationSummary(!teacherMode);
   els.teacherSection.hidden = !teacherMode;
   els.teacherToggle.classList.toggle("primary", teacherMode);
   if (teacherMode) renderTeacherView();
@@ -423,7 +498,7 @@ function renderTeacherLibrary() {
     node.innerHTML = `
       <div>
         <strong>${escapeHtml(content.title)}</strong>
-        <p>${content.sentence_count || content.sentences?.length || 0} 句 · ${escapeHtml(content.source_type || "video")} · ${escapeHtml(content.caption_status || "ready")}</p>
+        <p>${content.sentence_count || content.sentences?.length || 0} 句 · ${content.annotation_count || 0} 条标注 · ${escapeHtml(content.source_type || "video")} · ${escapeHtml(content.caption_status || "ready")}</p>
       </div>
       <button class="command ghost" type="button">${isActive ? "当前后台" : "查看后台"}</button>
     `;
@@ -434,6 +509,81 @@ function renderTeacherLibrary() {
     });
     return node;
   }));
+}
+
+function renderTeacherAnnotationWorkspace() {
+  renderTeacherSentencePicker();
+  renderTeacherAnnotationEditor();
+  renderAnnotationReferenceHint();
+  renderTeacherAnnotationList();
+}
+
+function renderTeacherSentencePicker() {
+  if (!els.teacherSentenceList) return;
+  const fragment = document.createDocumentFragment();
+  state.content.sentences.forEach((sentence, index) => {
+    const annotations = getAnnotationsForSentence(sentence.id);
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = `annotation-sentence-item ${index === state.currentIndex ? "active" : ""}`;
+    item.innerHTML = `
+      <span>${String(index + 1).padStart(2, "0")}</span>
+      <p>${escapeHtml(sentence.text)}</p>
+      <em>${annotations.length ? `${annotations.length} 条` : "未标"}</em>
+    `;
+    item.addEventListener("click", () => {
+      state.currentIndex = index;
+      state.currentSentenceVisible = false;
+      render();
+    });
+    fragment.append(item);
+  });
+  els.teacherSentenceList.replaceChildren(fragment);
+}
+
+function renderTeacherAnnotationEditor() {
+  const sentence = currentSentence();
+  els.teacherCurrentSentenceIndex.textContent = String(state.currentIndex + 1).padStart(2, "0");
+  els.teacherCurrentSentenceTime.textContent = `${formatTime(sentence.start)} - ${formatTime(sentence.end)}`;
+  els.teacherCurrentSentenceText.textContent = sentence.text;
+}
+
+function renderTeacherAnnotationList() {
+  const annotations = getAnnotationsForSentence(currentSentence().id);
+  els.teacherAnnotationList.replaceChildren(...annotations.map((annotation) => renderAnnotationCard(annotation, { editable: true })));
+  if (!annotations.length) {
+    els.teacherAnnotationList.innerHTML = '<div class="empty">这句还没有老师标注。</div>';
+  }
+}
+
+function renderStudentAnnotationSummary(visible) {
+  els.studentAnnotationSection.hidden = !visible;
+  if (!visible) return;
+  const annotations = getAnnotationsForSentence(currentSentence().id);
+  els.studentAnnotationList.replaceChildren(...annotations.map((annotation) => renderAnnotationCard(annotation, { editable: false })));
+  if (!annotations.length) {
+    els.studentAnnotationList.innerHTML = '<div class="empty">这句还没有老师标注。</div>';
+  }
+}
+
+function renderAnnotationCard(annotation, options = {}) {
+  const meta = annotationMeta(annotation);
+  const node = document.createElement("article");
+  node.className = "annotation-card";
+  node.innerHTML = `
+    <div class="annotation-card-head">
+      <span class="annotation-tag">${escapeHtml(meta.title)}</span>
+      ${options.editable ? '<button class="link-button" type="button">删除</button>' : ""}
+    </div>
+    <strong>${escapeHtml(annotation.summary)}</strong>
+    ${annotation.detail ? `<p>${escapeHtml(annotation.detail)}</p>` : ""}
+    ${annotation.example ? `<p class="annotation-example">${escapeHtml(annotation.example)}</p>` : ""}
+    ${meta.referenceUrl ? `<a class="annotation-reference" href="${escapeHtml(meta.referenceUrl)}" target="_blank" rel="noreferrer">${escapeHtml(meta.referenceTitle)}</a>` : `<span class="annotation-reference">${escapeHtml(meta.referenceTitle)}</span>`}
+  `;
+  if (options.editable) {
+    node.querySelector("button").addEventListener("click", () => deleteTeacherAnnotation(annotation.id));
+  }
+  return node;
 }
 
 function renderReviewItem(item) {
@@ -657,6 +807,96 @@ function toggleFavorite() {
   renderCurrentSentence();
 }
 
+async function saveTeacherAnnotation(event) {
+  event.preventDefault();
+  if (!isTeacherAccount()) return setSyncStatus("只有老师账号可以保存标注");
+  if (!API_BASE) return setSyncStatus("API 未配置，无法保存老师标注");
+
+  const sentence = currentSentence();
+  const label = els.annotationLabel.value;
+  const meta = annotationMeta(label);
+  const summary = els.annotationSummary.value.trim();
+  const detail = els.annotationDetail.value.trim();
+  const example = els.annotationExample.value.trim();
+
+  if (!summary) {
+    els.annotationSummary.focus();
+    return setSyncStatus("请先写一句话标注");
+  }
+
+  try {
+    await api("/api/teacher/annotations", {
+      method: "POST",
+      body: {
+        teacher_id: state.account.user.id,
+        content_id: state.content.id,
+        sentence_id: sentence.id,
+        label,
+        summary,
+        detail,
+        example,
+        reference_key: meta.referenceKey
+      }
+    });
+    els.annotationSummary.value = "";
+    els.annotationDetail.value = "";
+    els.annotationExample.value = "";
+    await refreshCurrentContent();
+    setSyncStatus("老师标注已保存");
+    render();
+  } catch (error) {
+    setSyncStatus(`老师标注保存失败 · ${error.message}`);
+  }
+}
+
+async function deleteTeacherAnnotation(annotationId) {
+  if (!isTeacherAccount()) return setSyncStatus("只有老师账号可以删除标注");
+  if (!window.confirm("确定删除这条老师标注吗？")) return;
+
+  try {
+    await api(`/api/teacher/annotations/${encodeURIComponent(annotationId)}?teacher_id=${encodeURIComponent(state.account.user.id)}`, {
+      method: "DELETE"
+    });
+    await refreshCurrentContent();
+    setSyncStatus("老师标注已删除");
+    render();
+  } catch (error) {
+    setSyncStatus(`删除失败 · ${error.message}`);
+  }
+}
+
+async function refreshCurrentContent() {
+  if (!API_BASE || !state.content?.id) return;
+  const selectedIndex = state.currentIndex;
+  const data = await api(`/api/contents/${encodeURIComponent(state.content.id)}`);
+  state.content = normalizeContent({ ...data.content, sentences: data.sentences, annotations: data.annotations });
+  state.currentIndex = Math.min(selectedIndex, Math.max(0, state.content.sentences.length - 1));
+  state.contents = state.contents.map((content) =>
+    content.id === state.content.id
+      ? { ...content, annotation_count: state.content.annotations.length, sentence_count: state.content.sentence_count }
+      : content
+  );
+}
+
+function renderAnnotationReferenceHint() {
+  if (!els.annotationReferenceHint) return;
+  const meta = annotationMeta(els.annotationLabel.value);
+  els.annotationReferenceHint.innerHTML = meta.referenceUrl
+    ? `参考：<a href="${escapeHtml(meta.referenceUrl)}" target="_blank" rel="noreferrer">${escapeHtml(meta.referenceTitle)}</a>`
+    : `参考：${escapeHtml(meta.referenceTitle)}`;
+}
+
+function getAnnotationsForSentence(sentenceId) {
+  return (state.content.annotations || [])
+    .filter((annotation) => annotation.sentence_id === sentenceId)
+    .sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at)));
+}
+
+function annotationMeta(annotationOrLabel) {
+  const label = typeof annotationOrLabel === "string" ? annotationOrLabel : annotationOrLabel?.label;
+  return ANNOTATION_TYPES[label] || ANNOTATION_TYPES.other;
+}
+
 async function handleImport(event) {
   event.preventDefault();
   const title = els.importTitle.value.trim() || "Untitled listening content";
@@ -688,7 +928,7 @@ async function handleImport(event) {
           srt
         }
       });
-      const remote = normalizeContent({ ...data.content, sentences: data.sentences });
+      const remote = normalizeContent({ ...data.content, sentences: data.sentences, annotations: data.annotations });
       state.contents.unshift(remote);
       state.content = remote;
       state.currentIndex = 0;
@@ -771,7 +1011,7 @@ async function pollCaptionJob(jobId) {
 }
 
 function importRemoteContent(contentPayload) {
-  const remote = normalizeContent({ ...contentPayload.content, sentences: contentPayload.sentences });
+  const remote = normalizeContent({ ...contentPayload.content, sentences: contentPayload.sentences, annotations: contentPayload.annotations });
   state.contents.unshift(remote);
   state.content = remote;
   state.currentIndex = 0;
@@ -943,13 +1183,30 @@ function normalizeContent(content) {
     end_ms: Number.isFinite(sentence.end_ms) ? sentence.end_ms : Math.round((sentence.end || 0) * 1000),
     text: sentence.text || ""
   }));
+  const annotations = (content.annotations || []).map((annotation) => ({
+    id: annotation.id || `local_annotation_${crypto.randomUUID?.() || Date.now()}`,
+    content_id: annotation.content_id || annotation.contentId || content.id,
+    sentence_id: annotation.sentence_id || annotation.sentenceId || "",
+    teacher_id: annotation.teacher_id || annotation.teacherId || "",
+    label: annotation.label || "other",
+    summary: annotation.summary || "",
+    detail: annotation.detail || "",
+    example: annotation.example || "",
+    reference_key: annotation.reference_key || annotation.referenceKey || annotationMeta(annotation).referenceKey,
+    position: Number(annotation.position || 0),
+    sentence_text: annotation.sentence_text || annotation.sentenceText || "",
+    created_at: annotation.created_at || annotation.createdAt || "",
+    updated_at: annotation.updated_at || annotation.updatedAt || ""
+  })).sort((a, b) => (a.position - b.position) || String(b.updated_at).localeCompare(String(a.updated_at)));
   return {
     ...content,
     source_url: content.source_url || content.sourceUrl || "",
     source_type: content.source_type || content.sourceType || "unknown",
     video_id: content.video_id || content.videoId || "",
     sentence_count: content.sentence_count || sentences.length,
-    sentences
+    annotation_count: content.annotation_count || annotations.length,
+    sentences,
+    annotations
   };
 }
 

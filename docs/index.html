@@ -86,6 +86,11 @@
             <div id="reviewList" class="review-list"></div>
           </section>
 
+          <section id="studentAnnotationSection" class="student-annotation-section">
+            <h2>老师标注</h2>
+            <div id="studentAnnotationList" class="annotation-list"></div>
+          </section>
+
         </aside>
       </main>
 
@@ -110,6 +115,72 @@
             <h2>学生学习证据</h2>
             <p>只看学生听到哪一句、红黄句和复听证据，不把老师自己的学习记录算进去。</p>
             <div id="teacherList" class="teacher-list"></div>
+          </section>
+
+          <section id="teacherAnnotationSection" class="teacher-card teacher-annotation-card">
+            <div class="teacher-annotation-head">
+              <div>
+                <h2>句子发音标注</h2>
+                <p>选中一句，给学生留下“为什么看稿懂但没听出来”的发音分析。</p>
+              </div>
+              <div class="reference-links">
+                <a href="https://www.teachingenglish.org.uk/professional-development/teachers/knowing-subject/c/connected-speech" target="_blank" rel="noreferrer">British Council</a>
+                <a href="https://www.oxfordlearnersdictionaries.com/about/english/pronunciation_english" target="_blank" rel="noreferrer">Oxford</a>
+              </div>
+            </div>
+
+            <div class="teacher-annotation-layout">
+              <div>
+                <p class="annotation-help">点击左侧句子作为标注对象。</p>
+                <div id="teacherSentenceList" class="annotation-sentence-list"></div>
+              </div>
+
+              <div class="annotation-editor">
+                <div class="annotation-current">
+                  <div>
+                    <span id="teacherCurrentSentenceIndex">01</span>
+                    <span id="teacherCurrentSentenceTime">00:00 - 00:00</span>
+                  </div>
+                  <p id="teacherCurrentSentenceText"></p>
+                </div>
+
+                <form id="annotationForm" class="annotation-form">
+                  <label>
+                    发音技巧
+                    <select id="annotationLabel" name="annotationLabel">
+                      <option value="linking">连读 / Linking</option>
+                      <option value="intrusion">插音 / Intrusion</option>
+                      <option value="elision">省音 / Elision</option>
+                      <option value="assimilation">同化 / Assimilation</option>
+                      <option value="weak_form">弱读 / Weak form</option>
+                      <option value="stress">重音 / Stress</option>
+                      <option value="intonation">语调 / Intonation</option>
+                      <option value="phoneme">单音辨认 / Phoneme</option>
+                      <option value="other">其他 / Other</option>
+                    </select>
+                  </label>
+                  <label>
+                    一句话标注
+                    <input id="annotationSummary" autocomplete="off" maxlength="180" placeholder="例如：and you 连读，/d/ 后接 /j/，容易听成一个音">
+                  </label>
+                  <label>
+                    具体说明
+                    <textarea id="annotationDetail" rows="4" placeholder="说明学生应该听哪个声音变化、为什么会卡、下次怎么验证。"></textarea>
+                  </label>
+                  <label>
+                    示范 / 对比例句
+                    <input id="annotationExample" autocomplete="off" maxlength="300" placeholder="例如：and you → /ən juː/，先慢读再贴近原速">
+                  </label>
+                  <p id="annotationReferenceHint" class="annotation-reference-hint"></p>
+                  <button class="command primary" type="submit">保存老师标注</button>
+                </form>
+
+                <div>
+                  <h3>本句已有标注</h3>
+                  <div id="teacherAnnotationList" class="annotation-list"></div>
+                </div>
+              </div>
+            </div>
           </section>
         </div>
       </section>
